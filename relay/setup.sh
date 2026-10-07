@@ -135,3 +135,62 @@ install_deps() {
     python3 python3-venv python3-pip ca-certificates
 }
 
+repo_root() {
+  local here
+  here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  echo "$(cd "$here/.." && pwd)"
+}
+
+copy_source() {
+  local repo="$1"
+  [ -d "$repo/relay" ] || die "cannot find 'relay/' next to $repo - run this script from the repository (relay/setup.sh)"
+  log "installing application files into $INSTALL_DIR"
+  mkdir -p "$INSTALL_DIR"
+  rm -rf "$INSTALL_DIR/relay"
+  cp -a "$repo/relay" "$INSTALL_DIR/"
+  [ -f "$repo/config.example.yaml" ] && cp -a "$repo/config.example.yaml" "$INSTALL_DIR/" || true
+  [ -f "$repo/README.md" ] && cp -a "$repo/README.md" "$INSTALL_DIR/" || true
+
+  # Package the agent so the install web server can hand it out as a tarball.
+  if [ -d "$repo/agent" ]; then
+    log "packaging agent -> $INSTALL_DIR/agent-dist.tar.gz"
+    rm -f "$INSTALL_DIR/agent-dist.tar.gz"
+    tar -czf "$INSTALL_DIR/agent-dist.tar.gz" -C "$repo" agent
+  else
+    warn "no 'agent/' directory found - /agent.tar.gz will be unavailable"
+  fi
+}
+
+create_venv() {
+  log "creating virtualenv"
+  if [ ! -x "$PY" ]; then
+    python3 -m venv "$VENV"
+  fi
+  "$VENV/bin/pip" install --quiet --upgrade pip
+  "$VENV/bin/pip" install --quiet -r "$INSTALL_DIR/relay/requirements.txt"
+  ok "python dependencies installed"
+}
+
+write_config() {
+  log "writing config $CONFIG_FILE"
+  mkdir -p "$CONFIG_DIR" "$DATA_DIR"
+  if [ -f "$CONFIG_FILE" ]; then
+    warn "$CONFIG_FILE already exists - leaving it untouched"
+    return
+  fi
+  cat > "$CONFIG_FILE" <<EOF
+relay:
+  ssh_host: $SSH_HOST
+  ssh_port: $SSH_PORT
+  ws_host: $WS_HOST
+  ws_port: $WS_PORT
+  ws_path: /agent
+  host_key: $DATA_DIR/relay_host_key
+  authorized_keys: $DATA_DIR/authorized_keys
+  allow_anonymous: false
+  default_term: xterm-256color
+  open_timeout: 15
+  auth_timeout: 30
+  advertise_host: $ADVERTISE_HOST
+  agent_package: $INSTALL_DIR/agent-dist.tar.gz
+
