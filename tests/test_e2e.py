@@ -265,3 +265,15 @@ def test_end_to_end_interactive_shell() -> None:
     asyncio.run(_scenario())
 
 
+def test_c2_split_args_keeps_special_characters() -> None:
+    split = RelaySession._split_args
+    # `!!` and other metacharacters survive a plain (unquoted) password
+    assert split("add-server srv pa!!word") == ["add-server", "srv", "pa!!word"]
+    assert split("add-server srv p@ss#w!rd") == ["add-server", "srv", "p@ss#w!rd"]
+    # backslashes stay verbatim unless the operator quotes them
+    assert split(r"add-server srv a\b") == ["add-server", "srv", "a\\b"]
+    # quoting allows spaces and any special characters
+    assert split('add-server srv "pa !! word"') == ["add-server", "srv", "pa !! word"]
+    assert split("set-password srv 'a b!c'") == ["set-password", "srv", "a b!c"]
+
+
