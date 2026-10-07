@@ -194,3 +194,66 @@ relay:
   advertise_host: $ADVERTISE_HOST
   agent_package: $INSTALL_DIR/agent-dist.tar.gz
 
+web:
+  web_enabled: true
+  web_host: $WEB_HOST
+  web_port: $WEB_PORT
+
+database:
+  path: $DATA_DIR/relay.db
+
+logging:
+  level: INFO
+EOF
+  touch "$DATA_DIR/authorized_keys"
+  chmod 600 "$DATA_DIR/authorized_keys"
+  chmod 750 "$CONFIG_DIR"
+  ok "config written"
+}
+
+ensure_service_user() {
+  if [ "$(id -u)" -ne 0 ]; then
+    warn "non-root install: skipping service user setup"
+    return
+  fi
+  if [ "$SERVICE_USER" = "root" ]; then
+    chmod 700 "$DATA_DIR"
+    return
+  fi
+  if ! id "$SERVICE_USER" >/dev/null 2>&1; then
+    log "creating system user '$SERVICE_USER'"
+    useradd --system --home-dir "$INSTALL_DIR" --shell /usr/sbin/nologin "$SERVICE_USER"
+  fi
+  chown -R "$SERVICE_USER":"$SERVICE_USER" "$INSTALL_DIR" "$DATA_DIR"
+  chmod 700 "$DATA_DIR"
+}
+
+init_database() {
+  log "initialising registry database"
+  ( cd "$INSTALL_DIR" && "$PY" -m relay.manage -c "$CONFIG_FILE" init )
+  if [ -n "$ADMIN_USER" ]; then
+    if [ -n "$ADMIN_PASSWORD" ]; then
+      ( cd "$INSTALL_DIR" && "$PY" -m relay.manage -c "$CONFIG_FILE" \
+          add-user "$ADMIN_USER" --password "$ADMIN_PASSWORD" )
+    else
+      ( cd "$INSTALL_DIR" && "$PY" -m relay.manage -c "$CONFIG_FILE" add-user "$ADMIN_USER" )
+    fi
+    ok "relay SSH user '$ADMIN_USER' ready"
+  fi
+}
+
+install_service() {
+  if [ "$INSTALL_SERVICE" = "0" ]; then
+    warn "skipping systemd install (--no-service)"
+    return
+  fi
+  command -v systemctl >/dev/null 2>&1 || die "systemctl not found; re-run with --no-service"
+
+  local unit="/etc/systemd/system/$SERVICE_NAME.service"
+  log "installing systemd unit $unit"
+  cat > "$unit" <<EOF
+[Unit]
+Description=WS-SSH relay
+After=network-online.target
+Wants=network-online.target
+
