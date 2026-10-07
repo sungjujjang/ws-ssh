@@ -39,3 +39,40 @@ SSH Client
 
 ---
 
+## 주요 기능
+
+- SSH를 통한 내부 서버 접속
+- WebSocket 기반 양방향 터미널 스트리밍
+- Linux PTY 및 Windows ConPTY 지원
+- 터미널 창 크기 실시간 동기화
+- 여러 서버와 여러 세션 관리
+- 관리자용 C2 CLI
+- 서버별 로그인 계정 및 비밀번호 관리
+- 에이전트 토큰 발급 및 재발급
+- 내부 서버 설치용 원라이너 제공
+- 호스트 / 네트워크 / 프로세스 정보 조회
+- 긴 출력에 대한 backpressure 처리
+- systemd 기반 서비스 설치
+- 프로토콜 / 보안 / E2E 테스트
+
+### 요구사항과 구현 위치
+
+| 기능 | 구현 |
+| --- | --- |
+| 키보드 입력 전달 | `relay/ssh_server.py` → `relay/registry.py` |
+| stdout / stderr 전달 | `agent/pty_backend.py` → `agent/agent.py` |
+| C2 CLI 입력 처리 | `relay/lineeditor.py` |
+| 방향키 / Home / End / Delete | `relay/lineeditor.py` |
+| Ctrl+C / Ctrl+D / Ctrl+L | `relay/lineeditor.py` 및 브리지 모드 |
+| 터미널 resize | `asyncssh` → `RESIZE` → `TIOCSWINSZ` |
+| ANSI / 컬러 출력 | raw byte stream + `TERM` / `COLORTERM` |
+| 긴 출력 처리 | 비동기 큐 + `pause_writing` / `resume_writing` |
+| Linux PTY | `pty.fork()` |
+| Windows PTY | pywinpty / ConPTY |
+| 관리자 C2 | `relay/ssh_server.py` |
+| 세션 관리 | `relay/registry.py` |
+| 로그 | `relay/logs.py` |
+| 서버 정보 조회 | `relay/ssh_server.py` + `agent/sysinfo.py` |
+
+---
+
