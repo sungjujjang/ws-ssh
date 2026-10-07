@@ -40,3 +40,20 @@ class RelayConfig:
     db_path: str = "data/relay.db"
     allow_anonymous: bool = False
     default_term: str = "xterm-256color"
+    auth_timeout: float = 30.0
+    ping_interval: float = 20.0
+    ping_timeout: float = 20.0
+    open_timeout: float = 15.0
+    # install web server: serves the agent package and one-line installers
+    web_enabled: bool = True
+    web_host: str = "0.0.0.0"
+    web_port: int = 1234
+    # tarball served at /agent.tar.gz (contains the agent/ package)
+    agent_package: str = "agent-dist.tar.gz"
+    # host/IP placed in generated install URLs; falls back to the address the
+    # operator connected to when empty
+    advertise_host: str = ""
+    log_level: str = "INFO"
+    banner: str = DEFAULT_BANNER
+    extra: dict[str, Any] = field(default_factory=dict)
+
