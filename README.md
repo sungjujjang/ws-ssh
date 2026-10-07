@@ -375,3 +375,73 @@ sh
 
 ---
 
+## 접속 방법
+
+### 관리자
+
+관리자는 Relay의 운영자 계정으로 로그인합니다.
+
+```bash
+ssh alice@relay-host -p 2222
+```
+
+접속 후 C2 CLI에서 서버를 선택합니다.
+
+```text
+C2> list
+
+SERVER       STATUS     SESS
+server-001   online       0
+
+C2> login server-001
+
+Connected to server-001
+
+alice@server-001:~$ clear
+alice@server-001:~$ top
+alice@server-001:~$ vim test.py
+alice@server-001:~$ exit
+
+[disconnected from remote shell]
+
+C2> exit
+```
+
+관리자는 서버별 로그인 비밀번호 없이 접속할 수 있습니다.
+
+### 바로 서버에 연결하기
+
+C2 메뉴를 거치지 않고 바로 연결할 수도 있습니다.
+
+```bash
+ssh -t alice@relay-host -p 2222 attach server-001
+```
+
+또는:
+
+```bash
+ssh -t alice@relay-host -p 2222 server-001
+```
+
+### 일반 사용자
+
+일반 사용자는 서버 ID를 SSH 사용자명으로 사용합니다.
+
+```bash
+ssh server-001@relay-host -p 2222
+```
+
+비밀번호는 서버를 생성할 때 지정한 서버 로그인 비밀번호입니다.
+
+인증되면 해당 서버의 셸로 바로 연결됩니다.
+
+```text
+server-001@relay-host's password:
+
+server-001:~$
+```
+
+일반 사용자는 해당 서버만 접근할 수 있으며 C2 명령은 사용할 수 없습니다.
+
+---
+
