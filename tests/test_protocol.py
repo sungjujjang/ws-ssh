@@ -36,3 +36,21 @@ def test_resize_helpers():
     assert protocol.decode_resize(payload) == (120, 40)
 
 
+def test_json_helpers():
+    frame = protocol.encode_json(protocol.OPEN, 3, {"shell": "/bin/bash", "cols": 80})
+    msg_type, session_id, payload = protocol.decode(frame)
+    assert msg_type == protocol.OPEN
+    assert session_id == 3
+    assert protocol.decode_json(payload) == {"shell": "/bin/bash", "cols": 80}
+
+
+def test_short_frame_rejected():
+    with pytest.raises(protocol.ProtocolError):
+        protocol.decode(b"\x01\x00")
+
+
+def test_resize_short_payload_rejected():
+    with pytest.raises(protocol.ProtocolError):
+        protocol.decode_resize(struct.pack(">H", 1))
+
+
