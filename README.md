@@ -145,3 +145,21 @@ tests/
 
 ---
 
+## 설치
+
+### 기본 설치
+
+```bash
+python3 -m venv .venv
+. .venv/bin/activate
+pip install -r requirements.txt
+```
+
+Windows에서 에이전트를 실행한다면:
+
+```powershell
+pip install pywinpty
+```
+
+---
+
