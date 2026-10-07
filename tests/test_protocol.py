@@ -54,3 +54,15 @@ def test_resize_short_payload_rejected():
         protocol.decode_resize(struct.pack(">H", 1))
 
 
+def test_type_name():
+    assert protocol.type_name(protocol.DATA) == "DATA"
+    assert protocol.type_name(0xEE) == "0xee"
+
+
+def test_vendored_protocol_copies_are_identical():
+    import pathlib
+
+    root = pathlib.Path(__file__).resolve().parent.parent
+    relay_copy = (root / "relay" / "protocol.py").read_bytes()
+    agent_copy = (root / "agent" / "protocol.py").read_bytes()
+    assert relay_copy == agent_copy, "relay/protocol.py and agent/protocol.py diverged"
