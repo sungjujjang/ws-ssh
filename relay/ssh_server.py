@@ -475,3 +475,103 @@ class RelaySession(asyncssh.SSHServerSession):
                 return sockname[0]
         return ""
 
+    async def _cmd_add_server(self, args: list[str]) -> None:
+        if not args:
+            self._emit_text("usage: add-server <id> [password]\r\n")
+            return
+        name = args[0]
+        if not _NAME_RE.match(name):
+            self._emit_text(
+                "\x1b[31minvalid server id\x1b[0m "
+                "(lowercase letters, digits, '.', '_', '-'; start alphanumeric)\r\n"
+            )
+            return
+        if self.db.get_server(name) is not None:
+            self._emit_text(
+                f"server {name} already exists; remove it with the manage CLI then retry\r\n"
+            )
+            return
+
+        password = args[1] if len(args) > 1 else None
+        if password is None:
+            password = await self._read_password(f"Login password for new server {name}: ")
+            if password is None:
+                self._emit_text("cancelled\r\n")
+                return
+        if not password:
+            self._emit_text("password must not be empty\r\n")
+            return
+
+        token = self.db.add_server(name, password, description="created from C2")
+        host = self._default_host()
+        self._emit_text(f"\r\n\x1b[32mServer '{name}' created.\x1b[0m\r\n\r\n")
+
+        installer = install_command(self.config, name, token, host) if host else None
+        if installer:
+            self._emit_text(
+                "Run this one-liner on the internal server (as root):\r\n\r\n"
+                f"  \x1b[36m{installer}\x1b[0m\r\n\r\n"
+                "It installs the agent, starts it now, and enables it on boot.\r\n"
+                f"The server appears as \x1b[32monline\x1b[0m in 'list' once connected.\r\n"
+            )
+        else:
+            self._emit_text(
+                "Agent token (shown once - keep it secret):\r\n"
+                f"  {token}\r\n\r\n"
+                "On the internal server, run:\r\n"
+                f"  {agent_command(self.config, name, token, host or None, None)}\r\n"
+            )
+
+    async def _cmd_login(self, args: list[str]) -> None:
+        if not args:
+            self._emit_text("usage: login <server> [password]\r\n")
+            return
+        name = args[0]
+        password = args[1] if len(args) > 1 else None
+
+        server = self.db.get_server(name)
+        if server is None:
+            self._emit_text(f"\x1b[31munknown server:\x1b[0m {name}\r\n")
+            return
+        if not server.enabled:
+            self._emit_text(f"server {name} is disabled\r\n")
+            return
+
+        # Operators are already authenticated against the relay, so they may
+        # attach without the per-server login password.  An explicit password is
+        # still accepted (and verified) for scripted/back-compat use.
+        if password is not None and not self.db.verify_server_login(name, password):
+            self._emit_text("\x1b[31mauthentication failed\x1b[0m\r\n")
+            return
+
+        if await self._open_bridge(name):
+            self._emit_text(f"\r\n\x1b[32mConnected to {name}\x1b[0m\r\n\r\n")
+
+    @staticmethod
+    def _parse_exec(command: str | None) -> str | None:
+        """Interpret an SSH exec command as an admin attach target."""
+        if not command:
+            return None
+        parts = command.strip().split()
+        if not parts:
+            return None
+        if parts[0] in ("attach", "login", "connect") and len(parts) > 1:
+            return parts[1]
+        if len(parts) == 1 and _NAME_RE.match(parts[0]):
+            return parts[0]
+        return None
+
+    async def _attach_admin(self, name: str) -> None:
+        """Exec path: attach as an authenticated operator (no server password)."""
+        server = self.db.get_server(name)
+        if server is None:
+            self._emit_text(f"\x1b[31munknown server:\x1b[0m {name}\r\n")
+            self._exit_requested = True
+            return
+        if not server.enabled:
+            self._emit_text(f"\x1b[31mserver {name} is disabled\x1b[0m\r\n")
+            self._exit_requested = True
+            return
+        if not await self._open_bridge(name):
+            self._exit_requested = True
+
