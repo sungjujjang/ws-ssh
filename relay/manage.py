@@ -224,3 +224,75 @@ def cmd_reset_token(args: argparse.Namespace) -> int:
     return 0
 
 
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="WS-SSH registry manager")
+    parser.add_argument("-c", "--config", help="path to a YAML config file")
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    sub.add_parser("init", help="create the database schema").set_defaults(func=cmd_init)
+
+    p_user = sub.add_parser("add-user", help="create/update a relay SSH user")
+    p_user.add_argument("username")
+    p_user.add_argument("--password")
+    p_user.set_defaults(func=cmd_add_user)
+
+    p_server = sub.add_parser("add-server", help="create/update an internal server")
+    p_server.add_argument("name")
+    p_server.add_argument("--password", help="C2 login password (prompted if omitted)")
+    p_server.add_argument("--description", default="")
+    p_server.add_argument("--token", help="reuse an existing agent token")
+    p_server.add_argument("--advertise-host", help="public host for generated install URLs")
+    p_server.add_argument("--web-port", type=int, help="install web port (default: from config/1234)")
+    p_server.add_argument("--ws-port", type=int, help="agent WebSocket port (default: from config)")
+    p_server.add_argument("--shell", help="shell the agent should run")
+    p_server.set_defaults(func=cmd_add_server)
+
+    sub.add_parser("list", help="list internal servers").set_defaults(func=cmd_list)
+
+    p_enable = sub.add_parser("enable", help="enable a server")
+    p_enable.add_argument("name")
+    p_enable.set_defaults(func=lambda a: cmd_set_enabled(a, True))
+
+    p_disable = sub.add_parser("disable", help="disable a server")
+    p_disable.add_argument("name")
+    p_disable.set_defaults(func=lambda a: cmd_set_enabled(a, False))
+
+    p_remove = sub.add_parser("remove-server", help="delete a server")
+    p_remove.add_argument("name")
+    p_remove.set_defaults(func=cmd_remove_server)
+
+    sub.add_parser("users", help="list relay SSH users").set_defaults(func=cmd_list_users)
+
+    p_rmuser = sub.add_parser("remove-user", help="delete a relay SSH user")
+    p_rmuser.add_argument("username")
+    p_rmuser.set_defaults(func=cmd_remove_user)
+
+    p_token = sub.add_parser("reset-token", help="rotate a server's agent token")
+    p_token.add_argument("name")
+    p_token.add_argument("--token", help="explicit new token (default: random)")
+    p_token.add_argument("--advertise-host", help="public host for the installer URL")
+    p_token.add_argument("--web-port", type=int)
+    p_token.add_argument("--ws-port", type=int)
+    p_token.set_defaults(func=cmd_reset_token)
+
+    p_setpw = sub.add_parser("set-password", help="change a server's login password")
+    p_setpw.add_argument("name")
+    p_setpw.add_argument("--password")
+    p_setpw.set_defaults(func=cmd_set_server_password)
+
+    p_setupw = sub.add_parser("set-user-password", help="change an operator's password")
+    p_setupw.add_argument("username")
+    p_setupw.add_argument("--password")
+    p_setupw.set_defaults(func=cmd_set_user_password)
+
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    return args.func(args)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
