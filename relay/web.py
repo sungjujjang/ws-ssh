@@ -177,3 +177,85 @@ class _InstallRequestHandler(BaseHTTPRequestHandler):
             return
         self._send_bytes(200, data, "application/gzip", filename="agent.tar.gz")
 
+    def _send_installer(self, raw_name: str, query: str) -> None:
+        db: RegistryDB = self.server.db
+        config: RelayConfig = self.server.config
+        name = urllib.parse.unquote(raw_name)
+        params = urllib.parse.parse_qs(query)
+        token = (params.get("token") or [""])[0]
+
+        if not name or not token or not db.verify_agent_token(name, token):
+            log.warning("rejected installer request for %r", name)
+            self._send_bytes(403, b"invalid server id or token\n", "text/plain; charset=utf-8")
+            return
+
+        host = config.advertise_host or _host_from_header(self.headers.get("Host", ""))
+        if not host:
+            host = self.connection.getsockname()[0]
+        display = _format_host(host)
+        relay_url = f"ws://{display}:{config.ws_port}{config.ws_path}"
+        package_url = f"http://{display}:{config.web_port}{PACKAGE_PATH}"
+        url = f"http://{display}:{config.web_port}{INSTALL_PATH}{name}?token={token}"
+
+        script = (
+            _BOOTSTRAP
+            .replace("@@RELAY_URL@@", _sh_single(relay_url))
+            .replace("@@SERVER_ID@@", _sh_single(name))
+            .replace("@@TOKEN@@", _sh_single(token))
+            .replace("@@PACKAGE_URL@@", _sh_single(package_url))
+            .replace(
+                "@@INSTALL_DIR@@",
+                '"${WS_INSTALL_DIR:-' + _dq_escape(DEFAULT_AGENT_DIR) + '}"',
+            )
+            .replace("@@URL@@", url)
+        )
+        self._send_bytes(
+            200,
+            script.encode("utf-8"),
+            "text/x-shellscript; charset=utf-8",
+        )
+
+    # -- helpers -----------------------------------------------------------
+    def _send_bytes(self, status: int, body: bytes, content_type: str, filename: str | None = None) -> None:
+        self.send_response(status)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(body)))
+        if filename:
+            self.send_header("Content-Disposition", f'attachment; filename="{filename}"')
+        self.end_headers()
+        if self.command != "HEAD" and body:
+            self.wfile.write(body)
+
+    def log_message(self, fmt: str, *args) -> None:  # noqa: A003 - http.server API
+        log.debug("web %s %s", self.address_string(), fmt % args)
+
+
+class WebServer:
+    def __init__(self, httpd: _InstallHTTPServer, thread: threading.Thread):
+        self._httpd = httpd
+        self._thread = thread
+
+    @property
+    def port(self) -> int:
+        return self._httpd.server_address[1]
+
+    def close(self) -> None:
+        try:
+            self._httpd.shutdown()
+        except Exception:  # pragma: no cover - best effort
+            pass
+        try:
+            self._httpd.server_close()
+        except Exception:  # pragma: no cover - best effort
+            pass
+        if self._thread.is_alive():
+            self._thread.join(timeout=5)
+
+
+def start_web_server(db: RegistryDB, config: RelayConfig) -> WebServer:
+    httpd = _InstallHTTPServer(
+        (config.web_host, config.web_port), _InstallRequestHandler, db, config
+    )
+    thread = threading.Thread(target=httpd.serve_forever, name="ws-install-web", daemon=True)
+    thread.start()
+    return WebServer(httpd, thread)
