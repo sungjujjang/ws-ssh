@@ -279,3 +279,96 @@ def _listening() -> list[dict[str, Any]]:
     return _proc_listen_ports()
 
 
+def collect_net() -> dict[str, Any]:
+    listening = _listening()
+    connection_count = None
+    if psutil is not None:
+        connection_count = _safe(lambda: len(psutil.net_connections(kind="inet")))
+    return {
+        "ips": local_ips(),
+        "interfaces": _net_interfaces(),
+        "listening": listening,
+        "connection_count": connection_count,
+    }
+
+
+def _proc_fallback(limit: int) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    try:
+        pids = [p for p in os.listdir("/proc") if p.isdigit()]
+    except Exception:
+        return rows
+    page = os.sysconf("SC_PAGE_SIZE") if hasattr(os, "sysconf") else 4096
+    for pid in pids:
+        try:
+            stat = _read(f"/proc/{pid}/stat")
+            rparen = stat.rfind(")")
+            name = stat[stat.find("(") + 1 : rparen]
+            rest = stat[rparen + 2 :].split()
+            rss = int(rest[21]) * page
+            utime, stime = int(rest[11]), int(rest[12])
+            rows.append(
+                {
+                    "pid": int(pid),
+                    "name": name,
+                    "username": None,
+                    "cpu_percent": None,
+                    "cpu_ticks": utime + stime,
+                    "memory_percent": None,
+                    "rss": rss,
+                }
+            )
+        except Exception:
+            continue
+    rows.sort(key=lambda r: r["cpu_ticks"], reverse=True)
+    return rows[:limit]
+
+
+def collect_procs(limit: int = 15) -> dict[str, Any]:
+    rows: list[dict[str, Any]] = []
+    if psutil is not None:
+        procs = _safe(
+            lambda: list(psutil.process_iter(["pid", "name", "username", "memory_percent"])), []
+        ) or []
+        # Prime cpu_percent so the second read covers a real interval.
+        for proc in procs:
+            _safe(lambda p=proc: p.cpu_percent(interval=None))
+        time.sleep(0.1)
+        for proc in procs:
+            try:
+                info = proc.info
+                cpu = _safe(lambda p=proc: p.cpu_percent(interval=None), None)
+                rows.append(
+                    {
+                        "pid": info.get("pid"),
+                        "name": info.get("name"),
+                        "username": info.get("username"),
+                        "cpu_percent": round(cpu, 1) if cpu is not None else None,
+                        "memory_percent": round(info.get("memory_percent") or 0.0, 1),
+                        "rss": _safe(lambda p=proc: p.memory_info().rss, None),
+                    }
+                )
+            except Exception:
+                continue
+        rows.sort(key=lambda r: (r["cpu_percent"] or 0.0), reverse=True)
+    else:
+        rows = _proc_fallback(limit)
+    return {"processes": rows[: max(1, limit)]}
+
+
+_COLLECTORS: dict[str, Callable[..., dict[str, Any]]] = {
+    "info": collect_info,
+    "net": collect_net,
+    "procs": collect_procs,
+}
+
+
+def collect(cmd: str, args: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Dispatch a SYSINFO request; raises ``ValueError`` on an unknown command."""
+    args = args or {}
+    if cmd == "procs":
+        return collect_procs(int(args.get("n") or 15))
+    collector = _COLLECTORS.get(cmd)
+    if collector is None:
+        raise ValueError(f"unknown sysinfo command: {cmd}")
+    return collector()
