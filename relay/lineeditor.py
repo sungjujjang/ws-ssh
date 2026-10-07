@@ -240,3 +240,84 @@ class LineEditor:
             self.cursor -= 1
             self._emit("\x1b[D")
 
+    def _move_right(self) -> None:
+        if self.cursor < len(self.buffer):
+            self.cursor += 1
+            self._emit("\x1b[C")
+
+    def _kill_word(self) -> None:
+        while self.cursor > 0 and self.buffer[self.cursor - 1] == " ":
+            del self.buffer[self.cursor - 1]
+            self.cursor -= 1
+        while self.cursor > 0 and self.buffer[self.cursor - 1] != " ":
+            del self.buffer[self.cursor - 1]
+            self.cursor -= 1
+        self._redraw()
+
+    # -- history -----------------------------------------------------------
+    def _history_prev(self) -> None:
+        if not self.history:
+            return
+        if self._history_index is None:
+            self._saved_line = "".join(self.buffer)
+            self._history_index = len(self.history) - 1
+        elif self._history_index > 0:
+            self._history_index -= 1
+        text = self.history[self._history_index]
+        self._set_line(text)
+
+    def _history_next(self) -> None:
+        if self._history_index is None:
+            return
+        if self._history_index < len(self.history) - 1:
+            self._history_index += 1
+            text = self.history[self._history_index]
+        else:
+            self._history_index = None
+            text = self._saved_line
+        self._set_line(text)
+
+    def _set_line(self, text: str) -> None:
+        self.buffer = list(text)
+        self.cursor = len(self.buffer)
+        self._redraw()
+
+    # -- completion --------------------------------------------------------
+    def _complete(self, completed: list[str]) -> None:
+        if self._completer is None:
+            return
+        line = "".join(self.buffer)
+        matches = self._completer(line, self.cursor)
+        if not matches:
+            return
+        if len(matches) == 1:
+            prefix_len = self._current_word_start()
+            self.buffer[prefix_len : self.cursor] = list(matches[0])
+            self.cursor = prefix_len + len(matches[0])
+            self._redraw()
+            return
+        # multiple candidates: show them and redraw the line
+        self._emit("\r\n")
+        self._emit("  ".join(matches) + "\r\n")
+        self._redraw()
+
+    def _current_word_start(self) -> int:
+        start = 0
+        for i in range(self.cursor - 1, -1, -1):
+            if self.buffer[i] == " ":
+                start = i + 1
+                break
+        return start
+
+    # -- rendering ---------------------------------------------------------
+    def _visible_buffer(self) -> str:
+        if self.secret:
+            return "*" * len(self.buffer)
+        return "".join(self.buffer)
+
+    def _redraw(self) -> None:
+        self._emit("\r\x1b[K" + self.prompt + self._visible_buffer())
+        if not self.secret:
+            tail = len(self.buffer) - self.cursor
+            if tail > 0:
+                self._emit(f"\x1b[{tail}D")
