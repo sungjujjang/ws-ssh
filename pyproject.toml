@@ -13,3 +13,20 @@ dependencies = [
     "PyYAML>=6.0",
 ]
 
+[project.optional-dependencies]
+dev = ["pytest>=8", "pyflakes>=3"]
+windows = ["pywinpty>=2.0"]
+
+[project.scripts]
+ws-relay = "relay.__main__:main"
+ws-agent = "agent.__main__:main"
+ws-manage = "relay.manage:main"
+
+[tool.setuptools]
+packages = ["relay", "agent"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+filterwarnings = [
+    "ignore::DeprecationWarning",
+]
