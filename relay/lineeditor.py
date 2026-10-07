@@ -165,3 +165,78 @@ class LineEditor:
         # Bare ESC followed by something else - drop it.
         self._esc = None
 
+    def _handle_ss3(self, final: str) -> None:
+        if final == "A":
+            self._history_prev()
+        elif final == "B":
+            self._history_next()
+        elif final == "C":
+            self._move_right()
+        elif final == "D":
+            self._move_left()
+        elif final == "H":
+            self.cursor = 0
+            self._redraw()
+        elif final == "F":
+            self.cursor = len(self.buffer)
+            self._redraw()
+
+    def _handle_csi(self, params: str, final: str) -> None:
+        if final == "A":
+            self._history_prev()
+        elif final == "B":
+            self._history_next()
+        elif final == "C":
+            self._move_right()
+        elif final == "D":
+            self._move_left()
+        elif final == "H":
+            self.cursor = 0
+            self._redraw()
+        elif final == "F":
+            self.cursor = len(self.buffer)
+            self._redraw()
+        elif final == "~":
+            code = params.split(";")[0]
+            if code in ("1", "7"):
+                self.cursor = 0
+                self._redraw()
+            elif code in ("4", "8"):
+                self.cursor = len(self.buffer)
+                self._redraw()
+            elif code == "3":
+
+                self._delete()
+            # 200~ / 201~ are bracketed-paste markers - ignore.
+        # other finals (R cursor report, Z shift-tab, ...) are ignored
+
+    # -- editing primitives ------------------------------------------------
+    def _insert(self, ch: str) -> None:
+        self.buffer.insert(self.cursor, ch)
+        self.cursor += 1
+        if self.secret:
+            self._redraw()
+        else:
+            self._emit(ch)
+
+    def _backspace(self) -> None:
+        if self.cursor == 0:
+            return
+        del self.buffer[self.cursor - 1]
+        self.cursor -= 1
+        if self.secret:
+            self._redraw()
+        else:
+            self._emit("\b \b")
+
+    def _delete(self) -> None:
+        if self.cursor >= len(self.buffer):
+            return
+        del self.buffer[self.cursor]
+        self._redraw()
+
+    def _move_left(self) -> None:
+        if self.cursor > 0:
+            self.cursor -= 1
+            self._emit("\x1b[D")
+
