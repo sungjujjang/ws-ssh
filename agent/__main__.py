@@ -81,3 +81,28 @@ async def amain(config: AgentConfig) -> None:
         runner.result()
 
 
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="WS-SSH internal agent")
+    parser.add_argument("-c", "--config", help="path to a YAML config file")
+    parser.add_argument("--relay", help="relay WebSocket URL, e.g. ws://relay:8765/agent")
+    parser.add_argument("--id", help="server id (name) registered on the relay")
+    parser.add_argument("--token", help="agent registration token")
+    parser.add_argument("--shell", help="shell to run (default: platform shell)")
+    parser.add_argument("--cwd", help="working directory for the shell")
+    parser.add_argument("--log-level", default="INFO")
+    args = parser.parse_args(argv)
+
+    logging.basicConfig(
+        level=getattr(logging, args.log_level.upper(), logging.INFO),
+        format="%(asctime)s %(levelname)-7s %(name)s: %(message)s",
+    )
+    config = build_config(args)
+    try:
+        asyncio.run(amain(config))
+    except KeyboardInterrupt:  # pragma: no cover
+        pass
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
