@@ -531,3 +531,37 @@ resize
 
 ---
 
+## Relay 중지 / 재시작
+
+systemd로 설치했다면:
+
+```bash
+sudo systemctl stop ws-relay
+sudo systemctl restart ws-relay
+sudo systemctl status ws-relay
+sudo journalctl -u ws-relay -f
+```
+
+직접 실행했다면 해당 프로세스를 종료하면 됩니다.
+
+```bash
+kill "$(cat /tmp/ws-test2/relay.pid)"
+```
+
+또는:
+
+```bash
+pkill -f "python -m relay"
+```
+
+정상 종료 시 SSH, WebSocket, 설치 웹 서버의 리스너를 함께 정리합니다.
+
+에이전트는 `Restart=always`로 설정되어 있으므로 서비스를 완전히 중지하려면:
+
+```bash
+sudo systemctl stop ws-agent
+sudo systemctl disable ws-agent
+```
+
+---
+
