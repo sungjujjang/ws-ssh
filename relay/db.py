@@ -155,3 +155,58 @@ class RegistryDB:
             cur = conn.execute("DELETE FROM servers WHERE name = ?", (name,))
         return cur.rowcount > 0
 
+    def rotate_server_token(self, name: str, token: str | None = None) -> str | None:
+        """Replace a server's agent token.  Returns the new plaintext token."""
+        token = token or new_token()
+        with self._connect() as conn:
+            cur = conn.execute(
+                "UPDATE servers SET token_hash = ? WHERE name = ?",
+                (hash_secret(token), name),
+            )
+        return token if cur.rowcount > 0 else None
+
+    def get_server(self, name: str) -> Server | None:
+        with self._connect() as conn:
+            row = conn.execute("SELECT * FROM servers WHERE name = ?", (name,)).fetchone()
+        return _row_to_server(row) if row else None
+
+    def list_servers(self) -> list[Server]:
+        with self._connect() as conn:
+            rows = conn.execute("SELECT * FROM servers ORDER BY name").fetchall()
+        return [_row_to_server(row) for row in rows]
+
+    def verify_agent_token(self, name: str, token: str) -> bool:
+        server = self.get_server(name)
+        if not server or not server.enabled:
+            return False
+        return verify_secret(token, server.token_hash)
+
+    def verify_server_login(self, name: str, password: str) -> bool:
+        server = self.get_server(name)
+        if not server or not server.enabled:
+            return False
+        return verify_secret(password, server.login_password_hash)
+
+    def set_server_login_password(self, name: str, password: str) -> bool:
+        """Change only a server's operator login password.  Returns True if found."""
+        with self._connect() as conn:
+            cur = conn.execute(
+                "UPDATE servers SET login_password_hash = ? WHERE name = ?",
+                (hash_secret(password), name),
+            )
+        return cur.rowcount > 0
+
+
+def _row_to_server(row: sqlite3.Row) -> Server:
+    return Server(
+        id=row["id"],
+        name=row["name"],
+        token_hash=row["token_hash"],
+        login_password_hash=row["login_password_hash"],
+        description=row["description"],
+        enabled=bool(row["enabled"]),
+    )
+
+
+def server_names(servers: Iterable[Server]) -> list[str]:
+    return [s.name for s in servers]
