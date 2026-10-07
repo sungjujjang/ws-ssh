@@ -64,3 +64,42 @@ async def amain(config: RelayConfig) -> None:
         web_server.close()
 
 
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="WS-SSH relay server")
+    parser.add_argument("-c", "--config", help="path to a YAML config file")
+    parser.add_argument("--ssh-port", type=int, help="override SSH port")
+    parser.add_argument("--ws-port", type=int, help="override agent WebSocket port")
+    parser.add_argument("--web-port", type=int, help="override install web port (default 1234)")
+    parser.add_argument("--advertise-host", help="public host used in generated install URLs")
+    parser.add_argument("--no-web", action="store_true", help="disable the install web server")
+    parser.add_argument("--log-level", default=None)
+    args = parser.parse_args(argv)
+
+    config = RelayConfig.load(args.config)
+    if args.ssh_port:
+        config.ssh_port = args.ssh_port
+    if args.ws_port:
+        config.ws_port = args.ws_port
+    if args.web_port:
+        config.web_port = args.web_port
+    if args.advertise_host:
+        config.advertise_host = args.advertise_host
+    if args.no_web:
+        config.web_enabled = False
+    if args.log_level:
+        config.log_level = args.log_level
+
+    logging.basicConfig(
+        level=getattr(logging, config.log_level.upper(), logging.INFO),
+        format="%(asctime)s %(levelname)-7s %(name)s: %(message)s",
+    )
+    install_log_buffer(logging.DEBUG if config.log_level.lower() == "debug" else logging.INFO)
+    try:
+        asyncio.run(amain(config))
+    except KeyboardInterrupt:  # pragma: no cover
+        pass
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
