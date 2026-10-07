@@ -140,3 +140,45 @@ class Agent:
             await asyncio.sleep(backoff)
             backoff = min(backoff * 2, self.config.reconnect_max)
 
+    async def _connect_and_serve(self) -> None:
+        log.info("connecting to relay %s as %s", self.config.relay_url, self.config.server_id)
+        ssl_arg = None
+        async with websockets.connect(
+            self.config.relay_url,
+            max_size=protocol.MAX_FRAME_SIZE,
+            ping_interval=self.config.ping_interval,
+            ping_timeout=self.config.ping_timeout,
+            open_timeout=15,
+            proxy=None,
+            ssl=ssl_arg,
+        ) as ws:
+            self._ws = ws
+            try:
+                await self._authenticate(ws)
+                log.info("authenticated; serving sessions")
+                await self._message_loop(ws)
+            finally:
+                self._ws = None
+                await self._close_all_sessions()
+
+    async def _authenticate(self, ws) -> None:
+        info = {
+            "id": self.config.server_id,
+            "token": self.config.token,
+            "version": protocol.PROTOCOL_VERSION,
+            "hostname": socket.gethostname(),
+            "os": platform.platform(),
+            "python": platform.python_version(),
+            "ips": sysinfo.local_ips(),
+        }
+        await ws.send(protocol.encode(protocol.AUTH, 0, json.dumps(info)))
+        raw = await asyncio.wait_for(ws.recv(), timeout=15)
+        if isinstance(raw, str):
+            raw = raw.encode("utf-8")
+        msg_type, _sid, payload = protocol.decode(raw)
+        if msg_type == protocol.AUTH_OK:
+            return
+        if msg_type == protocol.AUTH_FAIL:
+            raise AuthError(payload.decode("utf-8", "replace"))
+        raise AuthError(f"unexpected reply {protocol.type_name(msg_type)}")
+
