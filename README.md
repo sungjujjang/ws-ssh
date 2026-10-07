@@ -163,3 +163,100 @@ pip install pywinpty
 
 ---
 
+## Ubuntu에서 systemd로 설치하기
+
+### 1. Relay Server
+
+공인 서버 또는 중계 서버에서 실행합니다.
+
+```bash
+git clone <repo>
+cd ws-ssh
+
+sudo ./relay/setup.sh \
+    --ssh-port 2222 \
+    --ws-port 8765 \
+    --web-port 1234 \
+    --advertise-host <relay-public-ip-or-domain> \
+    --admin-user alice \
+    --admin-password 'strong-password'
+```
+
+설치 스크립트가 처리하는 작업:
+
+- Python 및 필요한 패키지 설치
+- `/opt/ws-ssh-relay`에 애플리케이션 설치
+- `/etc/ws-ssh/relay.yaml` 생성
+- `/var/lib/ws-ssh/relay.db` 초기화
+- `agent/`를 설치용 `agent-dist.tar.gz`로 패키징
+- `ws-relay.service` 등록 및 실행
+
+주요 옵션:
+
+```text
+--ssh-port
+--ws-port
+--web-host
+--web-port
+--advertise-host
+--admin-user
+--admin-password
+--service-user
+--install-dir
+--config-dir
+--data-dir
+--no-service
+--skip-deps
+--allow-nonroot
+```
+
+### 2. 내부 서버 추가
+
+Relay에 SSH로 접속한 뒤 C2 CLI에서 서버를 등록합니다.
+
+```bash
+ssh alice@<relay-host> -p 2222
+```
+
+```text
+C2> add-server server-001
+Login password for new server server-001: ********
+Server 'server-001' created.
+
+Run this one-liner on the internal server (as root):
+  curl -fsSL 'http://<relay-host>:1234/install/server-001?token=ws_...' | sudo bash
+```
+
+내부 서버에서는 출력된 한 줄만 실행하면 됩니다.
+
+```text
+agent-dist.tar.gz 다운로드
+        ↓
+/opt/ws-ssh-agent 설치
+        ↓
+/etc/ws-ssh/agent.env 저장
+        ↓
+ws-agent.service 등록
+        ↓
+에이전트 시작
+```
+
+에이전트가 Relay로 먼저 연결하기 때문에 내부 서버의 인바운드 포트를 열 필요가 없습니다.
+
+비밀번호에 `!!`, 공백, `$`, 백틱 등이 포함되어 있다면 명령어에 직접 넣지 않는 것을 권장합니다.
+
+```text
+C2> add-server server-001
+Login password for new server server-001: ********
+```
+
+이 방식은 셸의 history expansion이나 quoting 때문에 비밀번호가 변형되는 문제를 피할 수 있습니다.
+
+수동 설치가 필요한 경우에는 `agent/setup.sh`를 직접 실행하거나 다음 명령으로 토큰과 설치 링크를 확인할 수 있습니다.
+
+```bash
+python -m relay.manage add-server ...
+```
+
+---
+
