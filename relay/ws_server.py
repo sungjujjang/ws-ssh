@@ -109,3 +109,32 @@ async def _handle_agent(db: RegistryDB, registry: Registry, config: RelayConfig,
             log.info("agent %s disconnected", agent.server_name)
 
 
+def make_agent_handler(db: RegistryDB, registry: Registry, config: RelayConfig):
+    async def handler(ws):
+        path = ""
+        try:
+            request = getattr(ws, "request", None)
+            if request is not None and getattr(request, "path", None):
+                path = request.path.split("?", 1)[0]
+        except Exception:  # pragma: no cover
+            path = ""
+        if config.ws_path and path and path != config.ws_path:
+            log.warning("rejecting agent on unexpected path %r", path)
+            await ws.close(code=4004, reason="not found")
+            return
+        await _handle_agent(db, registry, config, ws)
+
+    return handler
+
+
+async def start_ws_server(db: RegistryDB, registry: Registry, config: RelayConfig):
+    handler = make_agent_handler(db, registry, config)
+    server = await websockets.serve(
+        handler,
+        config.ws_host,
+        config.ws_port,
+        max_size=protocol.MAX_FRAME_SIZE,
+        ping_interval=config.ping_interval,
+        ping_timeout=config.ping_timeout,
+    )
+    return server
