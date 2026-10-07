@@ -92,3 +92,102 @@ def _hex_ipv6(raw: str) -> str:
     return socket.inet_ntop(socket.AF_INET6, packed)
 
 
+def _proc_listen_ports() -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for path, decode in (("/proc/net/tcp", _hex_ipv4), ("/proc/net/tcp6", _hex_ipv6)):
+        try:
+            lines = _read(path).splitlines()[1:]
+        except Exception:
+            continue
+        for line in lines:
+            fields = line.split()
+            if len(fields) < 4 or fields[3] != "0A":  # 0A == TCP_LISTEN
+                continue
+            address, port_hex = fields[1].split(":")
+            try:
+                ip = decode(address)
+                port = int(port_hex, 16)
+            except Exception:
+                continue
+            rows.append({"proto": "tcp", "laddr": f"{ip}:{port}", "state": "LISTEN", "pid": None, "process": None})
+    return rows
+
+
+# --- collectors ------------------------------------------------------------
+
+
+def _uptime_seconds() -> float | None:
+    if psutil is not None:
+        boot = _safe(psutil.boot_time)
+        if boot:
+            return max(0.0, time.time() - boot)
+    return _proc_uptime()
+
+
+def _memory() -> dict[str, Any] | None:
+    if psutil is not None:
+        vm = _safe(psutil.virtual_memory)
+        if vm is not None:
+            return {"total": vm.total, "used": vm.used, "available": vm.available, "percent": vm.percent}
+    mem = _proc_meminfo()
+    if not mem:
+        return None
+    total = mem.get("MemTotal", 0)
+    available = mem.get("MemAvailable", mem.get("MemFree", 0))
+    used = max(0, total - available)
+    percent = round(used / total * 100, 1) if total else 0.0
+    return {"total": total, "used": used, "available": available, "percent": percent}
+
+
+def _swap() -> dict[str, Any] | None:
+    if psutil is not None:
+        sw = _safe(psutil.swap_memory)
+        if sw is not None:
+            return {"total": sw.total, "used": sw.used, "percent": sw.percent}
+    mem = _proc_meminfo()
+    total = mem.get("SwapTotal", 0)
+    free = mem.get("SwapFree", 0)
+    used = max(0, total - free)
+    return {"total": total, "used": used, "percent": round(used / total * 100, 1) if total else 0.0}
+
+
+def _disk(path: str | None = None) -> list[dict[str, Any]]:
+    target = path or os.path.expanduser("~") or "/"
+    try:
+        import shutil
+
+        usage = shutil.disk_usage(target)
+    except Exception:
+        return []
+    percent = round(usage.used / usage.total * 100, 1) if usage.total else 0.0
+    return [{"path": target, "total": usage.total, "used": usage.used, "free": usage.free, "percent": percent}]
+
+
+def _loadavg() -> list[float] | None:
+    try:
+        return [round(x, 2) for x in os.getloadavg()]
+    except (OSError, AttributeError):
+        return None
+
+
+def collect_info() -> dict[str, Any]:
+    cpu_percent = None
+    if psutil is not None:
+        cpu_percent = _safe(lambda: psutil.cpu_percent(interval=0.15))
+    return {
+        "hostname": _safe(socket.gethostname, ""),
+        "os": _safe(platform.platform, ""),
+        "kernel": _safe(platform.release, ""),
+        "arch": _safe(platform.machine, ""),
+        "python": platform.python_version(),
+        "ips": local_ips(),
+        "uptime_seconds": _uptime_seconds(),
+        "loadavg": _loadavg(),
+        "cpu_count": _safe(os.cpu_count),
+        "cpu_percent": cpu_percent,
+        "memory": _memory(),
+        "swap": _swap(),
+        "disk": _disk(),
+    }
+
+
