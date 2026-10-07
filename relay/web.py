@@ -128,3 +128,52 @@ def _host_from_header(host_header: str) -> str:
     return host_header.split(":", 1)[0]
 
 
+def _format_host(host: str) -> str:
+    host = (host or "").strip()
+    return f"[{host}]" if ":" in host and not host.startswith("[") else host
+
+
+class _InstallHTTPServer(ThreadingHTTPServer):
+    daemon_threads = True
+    allow_reuse_address = True
+
+    def __init__(self, address, handler, db: RegistryDB, config: RelayConfig):
+        super().__init__(address, handler)
+        self.db = db
+        self.config = config
+
+
+class _InstallRequestHandler(BaseHTTPRequestHandler):
+    server_version = "ws-install/1.0"
+    protocol_version = "HTTP/1.1"
+
+    # -- routing -----------------------------------------------------------
+    def do_GET(self) -> None:  # noqa: N802 - http.server API
+        parsed = urllib.parse.urlparse(self.path)
+        path = parsed.path
+        if path == "/health":
+            self._send_bytes(200, b"ok\n", "text/plain; charset=utf-8")
+        elif path in ("/", "/index.html"):
+            self._send_bytes(200, _LANDING, "text/html; charset=utf-8")
+        elif path == PACKAGE_PATH:
+            self._send_package()
+        elif path.startswith(INSTALL_PATH):
+            self._send_installer(path[len(INSTALL_PATH):], parsed.query)
+        else:
+            self._send_bytes(404, b"not found\n", "text/plain; charset=utf-8")
+
+    def do_HEAD(self) -> None:  # noqa: N802 - http.server API
+        self._send_bytes(200, b"", "text/plain; charset=utf-8")
+
+    # -- handlers ----------------------------------------------------------
+    def _send_package(self) -> None:
+        config: RelayConfig = self.server.config
+        try:
+            with open(config.agent_package, "rb") as handle:
+                data = handle.read()
+        except OSError as exc:
+            log.error("cannot read agent package %s: %s", config.agent_package, exc)
+            self._send_bytes(404, b"agent package not available\n", "text/plain; charset=utf-8")
+            return
+        self._send_bytes(200, data, "application/gzip", filename="agent.tar.gz")
+
