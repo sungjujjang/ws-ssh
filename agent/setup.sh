@@ -63,3 +63,76 @@ Options:
 EOF
 }
 
+# --------------------------------------------------------------------------- #
+# argument parsing
+# --------------------------------------------------------------------------- #
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --relay)           RELAY_URL="${2:?}"; shift 2 ;;
+    --id)              SERVER_ID="${2:?}"; shift 2 ;;
+    --token)           TOKEN="${2:?}"; shift 2 ;;
+    --shell)           SHELL_PATH="${2:?}"; shift 2 ;;
+    --install-dir)     INSTALL_DIR="${2:?}"; shift 2 ;;
+    --config-dir)      CONFIG_DIR="${2:?}"; shift 2 ;;
+    --service-name)    SERVICE_NAME="${2:?}"; shift 2 ;;
+    --service-user)    SERVICE_USER="${2:?}"; shift 2 ;;
+    --no-service)      INSTALL_SERVICE=0; shift ;;
+    --skip-deps)       SKIP_DEPS=1; shift ;;
+    --allow-nonroot)   ALLOW_NONROOT=1; shift ;;
+    -h|--help)         usage; exit 0 ;;
+    *) die "unknown option: $1 (see --help)" ;;
+  esac
+done
+
+VENV="$INSTALL_DIR/venv"
+PY="$VENV/bin/python"
+ENV_FILE="$CONFIG_DIR/agent.env"
+
+# --------------------------------------------------------------------------- #
+# helpers
+# --------------------------------------------------------------------------- #
+require_root() {
+  if [ "$(id -u)" -ne 0 ]; then
+    if [ "$ALLOW_NONROOT" = "1" ]; then
+      warn "running as non-root (--allow-nonroot): system packages and services are disabled"
+      INSTALL_SERVICE=0
+      SKIP_DEPS=1
+      if [ "$CONFIG_DIR" = "/etc/ws-ssh" ]; then
+        CONFIG_DIR="$INSTALL_DIR/etc"
+      fi
+      ENV_FILE="$CONFIG_DIR/agent.env"
+      return
+    fi
+    die "must run as root (try: sudo $0 $*) or pass --allow-nonroot for a user-local install"
+  fi
+}
+
+detect_os() {
+  if [ -r /etc/os-release ]; then
+    # shellcheck disable=SC1091
+    . /etc/os-release
+    case "${ID:-}${ID_LIKE:-}" in
+      *ubuntu*|*debian*|*linuxmint*) : ;;
+      *) warn "this script targets Ubuntu/Debian but ID='${ID:-unknown}' was detected; continuing" ;;
+    esac
+  fi
+}
+
+install_deps() {
+  if [ "$SKIP_DEPS" = "1" ]; then
+    log "skipping apt-get (--skip-deps)"
+    return
+  fi
+  log "installing system packages (python3, venv, pip)"
+  export DEBIAN_FRONTEND=noninteractive
+  apt-get update -y
+  apt-get install -y --no-install-recommends \
+    python3 python3-venv python3-pip ca-certificates
+}
+
+repo_root() {
+  local here
+  here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  echo "$(cd "$here/.." && pwd)"
+}
+
