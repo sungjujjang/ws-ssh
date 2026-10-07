@@ -62,3 +62,69 @@ one-line command printed by <code>add-server</code> in the C2 CLI.</p>
 
 # The bootstrap is generated per request.  Placeholders use an unusual marker
 # so they never collide with bash syntax.
+_BOOTSTRAP = """#!/usr/bin/env bash
+#
+# WS-SSH agent installer (generated).
+#   curl -fsSL '@@URL@@' | sudo bash
+#
+set -euo pipefail
+
+WS_RELAY_URL=@@RELAY_URL@@
+WS_SERVER_ID=@@SERVER_ID@@
+WS_AGENT_TOKEN=@@TOKEN@@
+WS_SHELL=''
+WS_PACKAGE_URL=@@PACKAGE_URL@@
+WS_INSTALL_DIR=@@INSTALL_DIR@@
+export WS_RELAY_URL WS_SERVER_ID WS_AGENT_TOKEN WS_SHELL WS_PACKAGE_URL WS_INSTALL_DIR
+
+if [ "$(id -u)" -ne 0 ] && [ "${WS_ALLOW_NONROOT:-0}" != "1" ]; then
+  echo "[ws] must run as root (use: curl ... | sudo bash)" >&2
+  exit 1
+fi
+
+if ! command -v curl >/dev/null 2>&1; then
+  if command -v apt-get >/dev/null 2>&1; then
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get update -y >/dev/null
+    apt-get install -y --no-install-recommends curl ca-certificates >/dev/null
+  else
+    echo "[ws] curl is required" >&2
+    exit 1
+  fi
+fi
+
+TMP="$(mktemp -d)"
+trap 'rm -rf "$TMP"' EXIT
+
+echo "[ws] downloading agent package..."
+curl -fsSL "$WS_PACKAGE_URL" -o "$TMP/agent.tar.gz"
+tar -xzf "$TMP/agent.tar.gz" -C "$TMP"
+
+if [ ! -f "$TMP/agent/setup.sh" ]; then
+  echo "[ws] agent package is missing agent/setup.sh" >&2
+  exit 1
+fi
+
+exec bash "$TMP/agent/setup.sh"
+"""
+
+DEFAULT_AGENT_DIR = "/opt/ws-ssh-agent"
+
+
+def _sh_single(value: str) -> str:
+    """Quote *value* for a single-quoted bash word."""
+    return "'" + value.replace("'", "'\\''") + "'"
+
+
+def _dq_escape(value: str) -> str:
+    """Escape *value* for use inside a double-quoted bash string."""
+    return value.replace("\\", "\\\\").replace('"', '\\"').replace("$", "\\$").replace("`", "\\`")
+
+
+def _host_from_header(host_header: str) -> str:
+    host_header = (host_header or "").strip()
+    if host_header.startswith("["):
+        return host_header.split("]", 1)[0] + "]"
+    return host_header.split(":", 1)[0]
+
+
