@@ -252,3 +252,70 @@ class WindowsPty:
         )
         self._loop.run_in_executor(None, self._blocking_reader)
 
+    def _blocking_reader(self) -> None:  # pragma: no cover - windows only
+        while not self._closed:
+            try:
+                data = self._process.read(self.READ_SIZE)
+            except EOFError:
+                break
+            except Exception:
+                break
+            if not data:
+                break
+            self._loop.call_soon_threadsafe(self._queue.put_nowait, data)
+            if self._queue.qsize() >= self.HIGH_WATER:
+                # crude backpressure: sleep while the consumer catches up
+                import time
+
+                while self._queue.qsize() > self.LOW_WATER and not self._closed:
+                    time.sleep(0.005)
+        self._eof = True
+        self._loop.call_soon_threadsafe(self._queue.put_nowait, None)
+
+    async def read(self) -> bytes:
+        item = await self._queue.get()
+        if item is None:
+            return b""
+        return item
+
+    def write(self, data: bytes) -> None:
+        if self._closed or not data:
+            return
+        try:
+            self._process.write(data.decode("utf-8", "replace"))
+        except Exception:  # pragma: no cover - windows only
+            self.close()
+
+    def resize(self, cols: int, rows: int) -> None:
+        try:
+            self._process.setwinsize(max(rows, 1), max(cols, 1))
+        except Exception:  # pragma: no cover - windows only
+            pass
+
+    @property
+    def eof(self) -> bool:
+        return self._eof
+
+    def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        try:
+            self._process.terminate(force=True)
+        except Exception:  # pragma: no cover - windows only
+            pass
+
+
+def create_pty(
+    shell: str,
+    cols: int,
+    rows: int,
+    env: Mapping[str, str],
+    cwd: str | None = None,
+):
+    argv: list[str] = [shell]
+    if cwd is None:
+        cwd = default_cwd()
+    if sys.platform == "win32":
+        return WindowsPty(argv, cols, rows, env, cwd)
+    return UnixPty(argv, cols, rows, env, cwd)
