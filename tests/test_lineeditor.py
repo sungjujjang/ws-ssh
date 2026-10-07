@@ -51,3 +51,44 @@ def test_history_navigation():
     assert "".join(h.editor.buffer) == "second"
 
 
+def test_cursor_movement_and_insert():
+    h = Harness()
+    h.send("hlo")
+    h.send("\x1b[D")  # left
+    h.send("\x1b[D")  # left
+    h.send("el")
+    h.send("\x05")  # ctrl-e (end)
+    completed = h.send("!\r")
+    assert completed == ["hello!"]
+
+
+def test_ctrl_d_sets_eof_on_empty_line():
+    h = Harness()
+    h.send("\x04")
+    assert h.editor.eof is True
+
+
+def test_tab_completion_single_match():
+    h = Harness(completer=lambda line, cursor: ["login"])
+    h.send("log\t")
+    assert "".join(h.editor.buffer) == "login"
+
+
+def test_tab_completion_multiple_shows_candidates():
+    h = Harness(completer=lambda line, cursor: ["help", "helper"])
+    h.send("\t")
+    assert "help" in h.output and "helper" in h.output
+
+
+def test_utf8_multibyte():
+    h = Harness()
+    h.send("로그인")
+    assert "".join(h.editor.buffer) == "로그인"
+
+
+def test_ctrl_c_resets_line():
+    h = Harness()
+    h.send("partial")
+    h.send("\x03")
+    assert h.editor.buffer == []
+    assert "^C" in h.output
