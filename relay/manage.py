@@ -149,3 +149,78 @@ def cmd_set_enabled(args: argparse.Namespace, enabled: bool) -> int:
     return 0
 
 
+def cmd_remove_server(args: argparse.Namespace) -> int:
+    db = _open_db(args)
+    if not db.remove_server(args.name):
+        print(f"server '{args.name}' not found", file=sys.stderr)
+        return 1
+    print(f"server '{args.name}' removed")
+    return 0
+
+
+def cmd_list_users(args: argparse.Namespace) -> int:
+    db = _open_db(args)
+    users = db.list_relay_users()
+    if not users:
+        print("no relay users registered")
+        return 0
+    for user in users:
+        print(user)
+    return 0
+
+
+def cmd_remove_user(args: argparse.Namespace) -> int:
+    db = _open_db(args)
+    if not db.remove_relay_user(args.username):
+        print(f"relay user '{args.username}' not found", file=sys.stderr)
+        return 1
+    print(f"relay user '{args.username}' removed")
+    return 0
+
+
+def cmd_set_server_password(args: argparse.Namespace) -> int:
+    db = _open_db(args)
+    if db.get_server(args.name) is None:
+        print(f"server '{args.name}' not found", file=sys.stderr)
+        return 1
+    password = args.password or _prompt_password(f"New login password for server {args.name}: ")
+    db.set_server_login_password(args.name, password)
+    print(f"login password for server '{args.name}' updated")
+    return 0
+
+
+def cmd_set_user_password(args: argparse.Namespace) -> int:
+    db = _open_db(args)
+    if not db.relay_user_exists(args.username):
+        print(f"relay user '{args.username}' not found", file=sys.stderr)
+        return 1
+    password = args.password or _prompt_password(f"New password for operator {args.username}: ")
+    db.add_relay_user(args.username, password)
+    print(f"password for operator '{args.username}' updated")
+    return 0
+
+
+def cmd_reset_token(args: argparse.Namespace) -> int:
+    config = RelayConfig.load(args.config)
+    if args.advertise_host:
+        config.advertise_host = args.advertise_host
+    if args.web_port:
+        config.web_port = args.web_port
+    if args.ws_port:
+        config.ws_port = args.ws_port
+    db = RegistryDB(config.db_path)
+    db.init_schema()
+    token = db.rotate_server_token(args.name, token=args.token)
+    if token is None:
+        print(f"server '{args.name}' not found", file=sys.stderr)
+        return 1
+    print(f"new agent token for '{args.name}' (shown once):")
+    print(f"  {token}")
+    installer = install_command(config, args.name, token, args.advertise_host)
+    if installer:
+        print()
+        print("Reinstall the agent on the server with:")
+        print(f"  {installer}")
+    return 0
+
+
