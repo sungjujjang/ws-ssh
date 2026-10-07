@@ -288,3 +288,100 @@ class RelaySession(asyncssh.SSHServerSession):
         finally:
             await self._cleanup()
 
+    async def _cleanup(self) -> None:
+        if self._bridge is not None:
+            bridge, self._bridge = self._bridge, None
+            try:
+                await bridge.close(b"client disconnected")
+            except Exception:  # pragma: no cover
+                pass
+        if self._chan is not None:
+            try:
+                self._chan.close()
+            except Exception:  # pragma: no cover
+                pass
+
+    # -- command handling --------------------------------------------------
+    @staticmethod
+    def _split_args(line: str) -> list[str]:
+        """Split a C2 command line into words.
+
+        Plain input is split on whitespace (backslashes are kept verbatim so an
+        unquoted password is never mangled).  When the line contains quotes we
+        fall back to shell-like splitting so operators can pass passwords that
+        contain spaces or other special characters, e.g.::
+
+            add-server server-001 "p@ss !! word"
+        """
+        if "'" in line or '"' in line:
+            try:
+                return shlex.split(line)
+            except ValueError:
+                pass
+        return line.split()
+
+    async def _handle_command(self, raw_line: str) -> None:
+        line = raw_line.strip()
+        if not line:
+            return
+        self._editor.add_history(line)
+        parts = self._split_args(line)
+        command = parts[0].lower()
+        args = parts[1:]
+
+        if command in ("help", "?"):
+            self._print_help()
+        elif command in ("list", "servers", "ls"):
+            self._print_servers()
+        elif command in ("sessions", "who"):
+            self._print_sessions()
+        elif command in ("add-server", "addserver", "register"):
+            await self._cmd_add_server(args)
+        elif command in ("login", "connect", "attach"):
+            await self._cmd_login(args)
+        elif command in ("enable", "start"):
+            await self._cmd_set_enabled(args, True)
+        elif command in ("disable", "stop"):
+            await self._cmd_set_enabled(args, False)
+        elif command in ("remove-server", "del-server", "delete"):
+            await self._cmd_remove_server(args)
+        elif command in ("kick", "disconnect"):
+            await self._cmd_kick(args)
+        elif command in ("reset-token", "rotate-token"):
+            await self._cmd_reset_token(args)
+        elif command in ("users", "admins"):
+            self._print_users()
+        elif command in ("add-user", "add-admin"):
+            await self._cmd_add_user(args)
+        elif command in ("remove-user", "del-user", "remove-admin"):
+            await self._cmd_remove_user(args)
+        elif command in ("passwd", "password", "passwd-me"):
+            await self._cmd_passwd(args)
+        elif command in ("reset-password", "reset-passwd", "set-user-password"):
+            await self._cmd_reset_password(args)
+        elif command in ("set-password", "server-password"):
+            await self._cmd_set_server_password(args)
+        elif command in ("info", "sysinfo"):
+            await self._cmd_info(args)
+        elif command in ("net", "netstat", "network"):
+            await self._cmd_net(args)
+        elif command in ("procs", "ps", "top"):
+            await self._cmd_procs(args)
+        elif command in ("overview", "fleet", "all"):
+            await self._cmd_overview(args)
+        elif command in ("logs", "log", "tail"):
+            self._cmd_logs(args)
+        elif command in ("whoami", "me"):
+            self._emit_text(
+                f"{self.username} (\x1b[32moperator\x1b[0m)\r\n"
+                if self.direct_server is None
+                else f"{self.username} (server)\r\n"
+            )
+        elif command in ("ping",):
+            self._emit_text("pong\r\n")
+        elif command in ("exit", "quit", "logout", "bye"):
+            self._emit_text("Bye.\r\n")
+            self._exit_requested = True
+        else:
+            self._emit_text(f"\x1b[31munknown command:\x1b[0m {command} (try 'help')\r\n")
+
