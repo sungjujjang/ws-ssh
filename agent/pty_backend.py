@@ -161,3 +161,94 @@ class UnixPty:
             self._loop.remove_writer(self.fd)
             self._writer_registered = False
 
+    def _on_writable(self) -> None:
+        self._flush()
+
+    # -- resize / lifecycle ------------------------------------------------
+    def resize(self, cols: int, rows: int) -> None:
+        if self._closed:
+            return
+        try:
+            winsize = struct.pack("HHHH", max(rows, 1), max(cols, 1), 0, 0)
+            self._fcntl.ioctl(self.fd, self._termios.TIOCSWINSZ, winsize)
+        except OSError:
+            pass
+
+    @property
+    def eof(self) -> bool:
+        return self._eof
+
+    def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        self._pause_reader()
+        if self._writer_registered:
+            self._loop.remove_writer(self.fd)
+            self._writer_registered = False
+        try:
+            os.close(self.fd)
+        except OSError:
+            pass
+        self._signal_child()
+
+    def _signal_child(self) -> None:
+        for sig in (signal.SIGHUP, signal.SIGTERM):
+            try:
+                os.kill(self.pid, sig)
+            except (ProcessLookupError, PermissionError):
+                break
+        try:
+            asyncio.ensure_future(self._reap())
+        except RuntimeError:  # pragma: no cover - loop already closed
+            pass
+
+    async def _reap(self) -> None:
+        for _ in range(50):
+            try:
+                reaped, _status = os.waitpid(self.pid, os.WNOHANG)
+            except ChildProcessError:
+                return
+            if reaped == self.pid:
+                return
+            await asyncio.sleep(0.02)
+        try:
+            os.kill(self.pid, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError):
+            pass
+
+
+class WindowsPty:
+    """Windows ConPTY backend (requires the optional ``pywinpty`` package)."""
+
+    READ_SIZE = 65536
+    LOW_WATER = 64
+    HIGH_WATER = 256
+
+    def __init__(
+        self,
+        argv: Sequence[str],
+        cols: int,
+        rows: int,
+        env: Mapping[str, str],
+        cwd: str | None = None,
+    ):
+        try:
+            import winpty  # type: ignore
+        except ImportError as exc:  # pragma: no cover - windows only
+            raise RuntimeError(
+                "Windows support requires pywinpty (pip install pywinpty)"
+            ) from exc
+
+        self._loop = asyncio.get_running_loop()
+        self._queue: asyncio.Queue[bytes | None] = asyncio.Queue()
+        self._closed = False
+        self._eof = False
+        self._process = winpty.PtyProcess.spawn(
+            list(argv),
+            dimensions=(max(rows, 1), max(cols, 1)),
+            env=dict(env),
+            cwd=cwd,
+        )
+        self._loop.run_in_executor(None, self._blocking_reader)
+
