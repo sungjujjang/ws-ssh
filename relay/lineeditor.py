@@ -79,3 +79,89 @@ class LineEditor:
             self._feed_char(ch, completed)
         return completed
 
+    def add_history(self, line: str) -> None:
+        if line and (not self.history or self.history[-1] != line):
+            self.history.append(line)
+
+    # -- input handling ----------------------------------------------------
+    def _feed_char(self, ch: str, completed: list[str]) -> None:
+        if self._esc is not None:
+            self._feed_escape(ch, completed)
+            return
+
+        if ch == ESC:
+            self._esc = ESC
+            return
+        if ch in (_CR, _LF):
+            self._emit("\r\n")
+            line = "".join(self.buffer)
+            self.reset()
+            completed.append(line)
+            return
+        if ch in (_BACKSPACE, _BS):
+            self._backspace()
+            return
+        if ch == _CTRL_C:
+            self._emit("^C\r\n")
+            self.reset()
+            self.render_prompt()
+            return
+        if ch == _CTRL_D:
+            if not self.buffer:
+                self.eof = True
+            return
+        if ch == _CTRL_L:
+            self._emit("\x1b[2J\x1b[H")
+            self._redraw()
+            return
+        if ch == _CTRL_A:
+            self.cursor = 0
+            self._redraw()
+            return
+        if ch == _CTRL_E:
+            self.cursor = len(self.buffer)
+            self._redraw()
+            return
+        if ch == _CTRL_U:
+            del self.buffer[: self.cursor]
+            self.cursor = 0
+            self._redraw()
+            return
+        if ch == _CTRL_K:
+            del self.buffer[self.cursor:]
+            self._redraw()
+            return
+        if ch == _CTRL_W:
+            self._kill_word()
+            return
+        if ch == _TAB:
+            self._complete(completed)
+            return
+        if ch < " ":
+            # unknown control character - ignore
+            return
+        self._insert(ch)
+
+    def _feed_escape(self, ch: str, completed: list[str]) -> None:
+        assert self._esc is not None
+        self._esc += ch
+        seq = self._esc
+        # CSI sequences: ESC [ ... <final 0x40-0x7e>
+        if seq.startswith(ESC + "["):
+            if len(seq) < 3:
+                return
+            final = seq[-1]
+            if "@" <= final <= "~":
+                self._handle_csi(seq[2:-1], final)
+                self._esc = None
+            return
+        # SS3 sequences: ESC O <char>
+        if seq.startswith(ESC + "O"):
+            if len(seq) < 3:
+                return
+            self._handle_ss3(seq[2])
+            self._esc = None
+            return
+        # Bare ESC followed by something else - drop it.
+        self._esc = None
+
