@@ -74,3 +74,78 @@ def _open_db(args: argparse.Namespace) -> RegistryDB:
     return db
 
 
+def cmd_init(args: argparse.Namespace) -> int:
+    db = _open_db(args)
+    print(f"initialized database at {db.path}")
+    return 0
+
+
+def cmd_add_user(args: argparse.Namespace) -> int:
+    db = _open_db(args)
+    password = args.password or _prompt_password(f"Password for SSH user {args.username}: ")
+    db.add_relay_user(args.username, password)
+    print(f"relay user '{args.username}' saved")
+    return 0
+
+
+def cmd_add_server(args: argparse.Namespace) -> int:
+    config = RelayConfig.load(args.config)
+    if args.advertise_host:
+        config.advertise_host = args.advertise_host
+    if args.web_port:
+        config.web_port = args.web_port
+    if args.ws_port:
+        config.ws_port = args.ws_port
+    db = RegistryDB(config.db_path)
+    db.init_schema()
+
+    password = args.password or _prompt_password(f"Login password for server {args.name}: ")
+    token = db.add_server(
+        args.name,
+        password,
+        description=args.description or "",
+        token=args.token,
+    )
+    print(f"server '{args.name}' saved")
+    print()
+    print("Agent token (shown once - keep it secret):")
+    print(f"  {token}")
+    print()
+
+    installer = install_command(config, args.name, token, args.advertise_host)
+    if installer:
+        print("On the internal server, run this one-liner (as root):")
+        print()
+        print(f"  {installer}")
+        print()
+        print("It installs the agent, starts it now, and enables it on boot.")
+    else:
+        if config.web_enabled and not (args.advertise_host or config.advertise_host):
+            print("(pass --advertise-host to also print a one-line installer URL)")
+        print("Run the agent on the internal server with:")
+        print(f"  {agent_command(config, args.name, token, args.advertise_host, args.shell)}")
+    return 0
+
+
+def cmd_list(args: argparse.Namespace) -> int:
+    db = _open_db(args)
+    servers = db.list_servers()
+    if not servers:
+        print("no servers registered")
+        return 0
+    width = max(len(s.name) for s in servers) + 2
+    print(f"{'SERVER':<{width}} {'ENABLED':<8} DESCRIPTION")
+    for server in servers:
+        print(f"{server.name:<{width}} {str(server.enabled):<8} {server.description}")
+    return 0
+
+
+def cmd_set_enabled(args: argparse.Namespace, enabled: bool) -> int:
+    db = _open_db(args)
+    if not db.set_server_enabled(args.name, enabled):
+        print(f"server '{args.name}' not found", file=sys.stderr)
+        return 1
+    print(f"server '{args.name}' {'enabled' if enabled else 'disabled'}")
+    return 0
+
+
