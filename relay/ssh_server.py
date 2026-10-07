@@ -575,3 +575,102 @@ class RelaySession(asyncssh.SSHServerSession):
         if not await self._open_bridge(name):
             self._exit_requested = True
 
+    async def _attach_direct(self, name: str) -> None:
+        """Non-admin path: go straight into the named server's shell."""
+        server = self.db.get_server(name)
+        if server is None:
+            self._emit_text("\x1b[31mserver no longer exists\x1b[0m\r\n")
+            self._exit_requested = True
+            return
+        if not server.enabled:
+            self._emit_text(f"\x1b[31mserver {name} is disabled\x1b[0m\r\n")
+            self._exit_requested = True
+            return
+        if not await self._open_bridge(name):
+            self._exit_requested = True
+
+    async def _open_bridge(self, name: str) -> bool:
+        """Open a PTY session on ``name`` and mark the session as bridged."""
+        agent = self.registry.get(name)
+        if agent is None or agent.closed:
+            self._emit_text(f"server {name} is offline (agent not connected)\r\n")
+            return False
+
+        loop = asyncio.get_event_loop()
+        session_id = allocate_session_id()
+        bridge = SessionBridge(session_id, agent, client=self._writer)
+        bridge.opened = loop.create_future()
+        agent.add_session(bridge)
+
+        env = {
+            "TERM": self._term_type,
+            "LANG": os.environ.get("LANG", "C.UTF-8"),
+            "COLORTERM": "truecolor",
+        }
+        try:
+            await agent.send(
+                protocol.OPEN,
+                session_id,
+                json.dumps({"shell": None, "cols": self._cols, "rows": self._rows, "env": env}),
+            )
+        except ConnectionError:
+            agent.remove_session(session_id)
+            self._emit_text("agent connection lost\r\n")
+            return False
+
+        try:
+            result = await asyncio.wait_for(bridge.opened, timeout=self.config.open_timeout)
+        except asyncio.TimeoutError:
+            await bridge.close(b"")
+            self._emit_text("timed out opening remote shell\r\n")
+            return False
+
+        if not result or not result.get("ok"):
+            error = (result or {}).get("error") or "unknown error"
+            await bridge.close(b"")
+            self._emit_text(f"\x1b[31mfailed to open shell:\x1b[0m {error}\r\n")
+            return False
+
+        bridge.on_closed(self._on_bridge_closed)
+        self._bridge = bridge
+        return True
+
+    def _on_bridge_closed(self) -> None:
+        # The remote shell exited (or the agent dropped).
+        self._bridge = None
+        if self._chan is None:
+            return
+        self._emit_text("\r\n\x1b[33m[disconnected from remote shell]\x1b[0m\r\n")
+        if self.direct_server is not None:
+            # Direct sessions are single-use; end the connection.
+            self._exit_requested = True
+            self._inbound.put_nowait(None)
+            return
+        self._editor.reset()
+        self._editor.render_prompt()
+
+    async def _cmd_set_enabled(self, args: list[str], enabled: bool) -> None:
+        if not args:
+            self._emit_text("usage: enable|disable <server>\r\n")
+            return
+        name = args[0]
+        if not self.db.set_server_enabled(name, enabled):
+            self._emit_text(f"\x1b[31munknown server:\x1b[0m {name}\r\n")
+            return
+        verb = "enabled" if enabled else "disabled"
+        self._emit_text(f"server {name} {verb}\r\n")
+        if not enabled:
+            if await self.registry.disconnect(name, b"disabled by operator"):
+                self._emit_text(f"live agent for {name} disconnected\r\n")
+
+    async def _cmd_remove_server(self, args: list[str]) -> None:
+        if not args:
+            self._emit_text("usage: remove-server <server>\r\n")
+            return
+        name = args[0]
+        await self.registry.disconnect(name, b"server removed by operator")
+        if not self.db.remove_server(name):
+            self._emit_text(f"\x1b[31munknown server:\x1b[0m {name}\r\n")
+            return
+        self._emit_text(f"server {name} removed\r\n")
+
