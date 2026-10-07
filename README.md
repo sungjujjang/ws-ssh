@@ -565,3 +565,34 @@ sudo systemctl disable ws-agent
 
 ---
 
+## 보안
+
+이 프로젝트는 본인이 소유하거나 관리 권한을 가진 서버에서만 사용해야 합니다.
+
+인증 방식은 두 가지입니다.
+
+```text
+관리자
+Relay 운영자 계정
+    │
+    └── C2 CLI → 원하는 서버에 attach
+
+일반 사용자
+서버 ID + 서버 로그인 비밀번호
+    │
+    └── 해당 서버 셸로 직접 연결
+```
+
+추가로 다음 사항을 확인해야 합니다.
+
+- `allow_anonymous: true`는 개발 환경에서만 사용
+- 프로덕션에서는 `allow_anonymous: false` 권장
+- 에이전트 토큰과 C2 비밀번호는 해시 형태로 저장
+- 평문 자격증명은 생성 시 한 번만 출력
+- TLS 환경에서는 `wss://`와 reverse proxy 사용 권장
+- Relay host key는 최초 실행 시 Ed25519 키로 자동 생성
+
+`allow_anonymous: true`는 C2 CLI 운영자 권한과 연결되므로 운영 환경에서 활성화하지 않는 것을 권장합니다.
+
+---
+
