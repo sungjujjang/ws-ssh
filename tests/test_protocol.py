@@ -28,3 +28,11 @@ def test_binary_safe():
     assert payload == blob
 
 
+def test_resize_helpers():
+    frame = protocol.encode_resize(5, 120, 40)
+    msg_type, session_id, payload = protocol.decode(frame)
+    assert msg_type == protocol.RESIZE
+    assert session_id == 5
+    assert protocol.decode_resize(payload) == (120, 40)
+
+
