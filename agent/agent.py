@@ -182,3 +182,86 @@ class Agent:
             raise AuthError(payload.decode("utf-8", "replace"))
         raise AuthError(f"unexpected reply {protocol.type_name(msg_type)}")
 
+    async def _message_loop(self, ws) -> None:
+        async for raw in ws:
+            if isinstance(raw, str):
+                raw = raw.encode("utf-8")
+            try:
+                msg_type, session_id, payload = protocol.decode(raw)
+            except protocol.ProtocolError as exc:
+                log.warning("dropping malformed frame: %s", exc)
+                continue
+
+            if msg_type == protocol.OPEN:
+                await self._open_session(session_id, payload)
+            elif msg_type == protocol.DATA:
+                session = self.sessions.get(session_id)
+                if session is not None:
+                    session.write(payload)
+            elif msg_type == protocol.RESIZE:
+                session = self.sessions.get(session_id)
+                if session is not None:
+                    try:
+                        cols, rows = protocol.decode_resize(payload)
+                        session.resize(cols, rows)
+                    except protocol.ProtocolError:
+                        pass
+            elif msg_type == protocol.CLOSE:
+                session = self.sessions.pop(session_id, None)
+                if session is not None:
+                    await session.close()
+            elif msg_type == protocol.PING:
+                await self.send(protocol.PONG, session_id, b"")
+            elif msg_type == protocol.SYSINFO:
+                await self._handle_sysinfo(session_id, payload)
+            # AUTH_OK/PONG/unknown are ignored.
+
+    async def _handle_sysinfo(self, session_id: int, payload: bytes) -> None:
+        request: dict = {}
+        try:
+            request = protocol.decode_json(payload) if payload else {}
+        except protocol.ProtocolError:
+            pass
+        cmd = request.get("cmd") or ""
+        args = request.get("args") or {}
+        try:
+            data = sysinfo.collect(cmd, args)
+            reply = {"cmd": cmd, "ok": True, "error": None, "data": data}
+        except Exception as exc:
+            log.warning("sysinfo %s failed: %s", cmd, exc)
+            reply = {"cmd": cmd, "ok": False, "error": str(exc), "data": None}
+        await self.send(protocol.SYSINFO_RES, session_id, json.dumps(reply))
+
+    async def _open_session(self, session_id: int, payload: bytes) -> None:
+        try:
+            options = protocol.decode_json(payload) if payload else {}
+        except protocol.ProtocolError:
+            options = {}
+        shell = options.get("shell") or self.config.shell or default_shell()
+        cols = int(options.get("cols") or 80)
+        rows = int(options.get("rows") or 24)
+        env = dict(os.environ)
+        env.update(self.config.env)
+        env.update(options.get("env") or {})
+        env.setdefault("TERM", "xterm-256color")
+        cwd = options.get("cwd") or self.config.cwd
+        try:
+            session = AgentSession(self, session_id, shell, cols, rows, env, cwd)
+        except Exception as exc:
+            log.exception("failed to spawn shell for session %s", session_id)
+            await self.send(protocol.OPENED, session_id, json.dumps({"ok": False, "error": str(exc)}))
+            return
+
+        self.sessions[session_id] = session
+        await self.send(protocol.OPENED, session_id, json.dumps({"ok": True, "error": None}))
+        session.start()
+        log.info("opened session %s (%s, %dx%d)", session_id, shell, cols, rows)
+
+    async def _close_all_sessions(self) -> None:
+        sessions = list(self.sessions.values())
+        self.sessions.clear()
+        for session in sessions:
+            await session.close()
+
+    def stop(self) -> None:
+        self._stop = True
