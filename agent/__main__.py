@@ -23,3 +23,61 @@ def _load_config_file(path: str | None) -> dict:
     return data.get("agent", data) if isinstance(data, dict) else {}
 
 
+def build_config(args: argparse.Namespace) -> AgentConfig:
+    file_cfg = _load_config_file(args.config)
+
+    def pick(cli_value, env_name, file_key, default=None):
+        if cli_value is not None:
+            return cli_value
+        if env_name and env_name in os.environ:
+            return os.environ[env_name]
+        if file_key in file_cfg:
+            return file_cfg[file_key]
+        return default
+
+    relay_url = pick(args.relay, "WS_RELAY_URL", "relay_url")
+    server_id = pick(args.id, "WS_SERVER_ID", "server_id")
+    token = pick(args.token, "WS_AGENT_TOKEN", "token")
+    if not relay_url or not server_id or not token:
+        raise SystemExit(
+            "relay url, server id and token are required "
+            "(use --relay/--id/--token or WS_RELAY_URL/WS_SERVER_ID/WS_AGENT_TOKEN)"
+        )
+
+    env = dict(file_cfg.get("env") or {})
+    return AgentConfig(
+        relay_url=relay_url,
+        server_id=server_id,
+        token=token,
+        shell=pick(args.shell, "WS_SHELL", "shell"),
+        cwd=pick(args.cwd, "WS_CWD", "cwd"),
+        env=env,
+    )
+
+
+async def amain(config: AgentConfig) -> None:
+    agent = Agent(config)
+    loop = asyncio.get_running_loop()
+    stop = asyncio.Event()
+
+    def _request_stop() -> None:
+        agent.stop()
+        stop.set()
+
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        try:
+            loop.add_signal_handler(sig, _request_stop)
+        except NotImplementedError:  # pragma: no cover - windows
+            pass
+
+    runner = asyncio.ensure_future(agent.run())
+    stopper = asyncio.ensure_future(stop.wait())
+    done, pending = await asyncio.wait(
+        {runner, stopper}, return_when=asyncio.FIRST_COMPLETED
+    )
+    for task in pending:
+        task.cancel()
+    if runner in done:
+        runner.result()
+
+
