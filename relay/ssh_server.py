@@ -961,3 +961,107 @@ class RelaySession(asyncssh.SSHServerSession):
         infos = await asyncio.gather(*(self._fetch_info(name) for name in online))
         self._print_overview(servers, dict(zip(online, infos)))
 
+    def _print_overview(self, servers, infos: dict[str, dict | None]) -> None:
+        self._emit_text(
+            "\r\n\x1b[1m  "
+            f"{'SERVER':<16} {'HOST':<16} {'IP':<15} {'UPTIME':<11} "
+            f"{'LOAD':>5} {'CPU':>4} {'MEM':>4} {'DISK':>4}\x1b[0m\r\n"
+        )
+        for server in servers:
+            if not server.enabled:
+                self._emit_text(f"  {server.name:<16} \x1b[33m(disabled)\x1b[0m\r\n")
+                continue
+            data = infos.get(server.name)
+            if data is None:
+                self._emit_text(f"  {server.name:<16} \x1b[31m(offline)\x1b[0m\r\n")
+                continue
+            host = str(data.get("hostname") or "")[:16]
+            ips = data.get("ips") or []
+            ip = str(ips[0])[:15] if ips else "-"
+            uptime = _human_duration(data.get("uptime_seconds"))
+            load = data.get("loadavg") or []
+            load_s = f"{load[0]:g}" if load else "-"
+            cpu = data.get("cpu_percent")
+            cpu_s = f"{cpu:.0f}%" if isinstance(cpu, (int, float)) else "-"
+            mem = data.get("memory") or {}
+            mem_s = f"{(mem.get('percent') or 0):.0f}%" if mem else "-"
+            disks = data.get("disk") or []
+            disk_s = f"{(disks[0].get('percent') or 0):.0f}%" if disks else "-"
+            self._emit_text(
+                f"  {server.name:<16} {host:<16} {ip:<15} {uptime:<11} "
+                f"{load_s:>5} {cpu_s:>4} {mem_s:>4} {disk_s:>4}\r\n"
+            )
+        self._emit_text("\r\n")
+
+    def _cmd_logs(self, args: list[str]) -> None:
+        count = 100
+        if args:
+            try:
+                count = max(1, min(int(args[0]), 500))
+            except ValueError:
+                self._emit_text("usage: logs [n]\r\n")
+                return
+        lines = logs.tail(count)
+        if not lines:
+            self._emit_text("No log lines buffered yet.\r\n")
+            return
+        self._emit_text("\r\n")
+        for line in lines:
+            self._emit_text(line + "\r\n")
+        self._emit_text("\r\n")
+
+    async def _read_password(self, prompt: str) -> str | None:
+        self._emit_text(prompt)
+        buffer: list[str] = []
+        while True:
+            data = await self._inbound.get()
+            if data is None:
+                return None
+            if self._bridge is not None:
+                # Should not happen, but keep the bytes for the bridge.
+                await self._bridge.send_input(data)
+                continue
+            for ch in data.decode("utf-8", "replace"):
+                if ch in ("\r", "\n"):
+                    self._emit_text("\r\n")
+                    return "".join(buffer)
+                if ch in ("\x7f", "\x08"):
+                    if buffer:
+                        buffer.pop()
+                        self._emit_text("\b \b")
+                elif ch == "\x03":
+                    self._emit_text("^C\r\n")
+                    return None
+                elif ch == "\x04":
+                    return None
+                elif ch >= " ":
+                    buffer.append(ch)
+                    self._emit_text("*")
+
+    def _complete(self, line: str, cursor: int) -> list[str]:
+        prefix = line[:cursor]
+        commands = [
+            "help", "list", "sessions", "add-server", "login", "enable", "disable",
+            "remove-server", "kick", "reset-token", "users", "add-user",
+            "remove-user", "passwd", "reset-password", "set-password",
+            "info", "net", "procs", "overview", "logs", "whoami", "ping", "exit",
+        ]
+        # completing the command itself
+        if " " not in prefix:
+            return [c for c in commands if c.startswith(prefix)]
+        parts = prefix.split()
+        command = parts[0]
+        word = "" if prefix.endswith(" ") else parts[-1]
+        if command in ("login", "connect", "attach", "enable", "disable", "remove-server",
+                       "del-server", "delete", "kick", "reset-token", "rotate-token",
+                       "set-password", "server-password", "info", "sysinfo", "net",
+                       "netstat", "network", "procs", "ps", "top"):
+            names = [s.name for s in self.db.list_servers()]
+            return [n for n in names if n.startswith(word)]
+        if command in ("remove-user", "del-user", "remove-admin",
+                       "reset-password", "reset-passwd", "set-user-password"):
+            names = self.db.list_relay_users()
+            return [n for n in names if n.startswith(word)]
+        return []
+
+
