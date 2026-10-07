@@ -494,3 +494,40 @@ Backspace
 
 ---
 
+## 터미널 resize
+
+SSH 클라이언트의 창 크기가 변경되면 `asyncssh`의 `terminal_size_changed()`가 호출됩니다.
+
+Relay는 변경된 크기를 `RESIZE` 프레임으로 전달하고, Agent는 PTY 크기를 갱신합니다.
+
+```text
+SSH Client
+    │
+    │ terminal_size_changed
+    ▼
+Relay
+    │
+    │ RESIZE
+    ▼
+Agent
+    │
+    │ TIOCSWINSZ / setwinsize
+    ▼
+PTY
+```
+
+따라서 `vim`, `top` 같은 프로그램의 화면도 터미널 크기에 맞춰 즉시 변경됩니다.
+
+E2E 테스트에서는 다음과 같이 resize 전파를 확인합니다.
+
+```text
+stty size
+30 100
+
+resize
+
+40 120
+```
+
+---
+
