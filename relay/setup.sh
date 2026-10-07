@@ -257,3 +257,72 @@ Description=WS-SSH relay
 After=network-online.target
 Wants=network-online.target
 
+[Service]
+Type=simple
+User=$SERVICE_USER
+WorkingDirectory=$INSTALL_DIR
+Environment=PYTHONUNBUFFERED=1
+ExecStart=$PY -m relay -c $CONFIG_FILE
+Restart=on-failure
+RestartSec=3
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target
+EOF
+  systemctl daemon-reload
+  systemctl enable "$SERVICE_NAME" >/dev/null
+  systemctl restart "$SERVICE_NAME"
+  ok "service '$SERVICE_NAME' enabled and started"
+}
+
+print_summary() {
+  local host
+  host="$(hostname -I 2>/dev/null | awk '{print $1}')"
+  [ -n "$host" ] || host="<this-host>"
+  cat <<EOF
+
+$(ok "relay server installation complete")
+
+  SSH endpoint      : ssh <user>@$host -p $SSH_PORT
+  Agent WebSocket   : ws://$host:$WS_PORT/agent
+  Install web       : http://$host:$WEB_PORT
+  config            : $CONFIG_FILE
+  database          : $DATA_DIR/relay.db
+
+Next steps
+  1. open the firewall if needed:
+       ufw allow $SSH_PORT/tcp && ufw allow $WS_PORT/tcp && ufw allow $WEB_PORT/tcp
+
+  2. connect and create a server from the C2 CLI (id + password):
+       ssh <user>@$host -p $SSH_PORT
+       C2> add-server server-001
+     It prints a one-line installer, e.g.
+       curl -fsSL 'http://$host:$WEB_PORT/install/server-001?token=<token>' | sudo bash
+
+  3. run that one-liner on the internal server: it installs the agent, starts
+     it now, and enables it on boot (systemd Restart=always).
+
+EOF
+}
+
+# --------------------------------------------------------------------------- #
+# main
+# --------------------------------------------------------------------------- #
+main() {
+  require_root "$@"
+  detect_ubuntu
+  local repo
+  repo="$(repo_root)"
+
+  install_deps
+  copy_source "$repo"
+  create_venv
+  write_config
+  ensure_service_user
+  init_database
+  install_service
+  print_summary
+}
+
+main "$@"
