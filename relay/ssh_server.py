@@ -385,3 +385,93 @@ class RelaySession(asyncssh.SSHServerSession):
         else:
             self._emit_text(f"\x1b[31munknown command:\x1b[0m {command} (try 'help')\r\n")
 
+    def _print_help(self) -> None:
+        self._emit_text(
+            "\r\n\x1b[1mAvailable commands\x1b[0m\r\n"
+            "  \x1b[36mlist\x1b[0m                        list known internal servers\r\n"
+            "  \x1b[36msessions\x1b[0m                    show live session counts per server\r\n"
+            "  \x1b[36madd-server <id> [pw]\x1b[0m        create a server and print its one-line installer\r\n"
+            "  \x1b[36mlogin <server> [pw]\x1b[0m          attach to a server's shell (admin: no pw needed)\r\n"
+            "  \x1b[36menable\x1b[0m <server>             allow the server / agent to connect\r\n"
+            "  \x1b[36mdisable\x1b[0m <server>            block the server and drop its agent\r\n"
+            "  \x1b[36mremove-server\x1b[0m <server>      delete a server and its credentials\r\n"
+            "  \x1b[36mkick\x1b[0m <server>                drop the live agent connection\r\n"
+            "  \x1b[36mreset-token\x1b[0m <server>          rotate the agent token and reprint the installer\r\n"
+            "  \x1b[36moverview\x1b[0m (`fleet`)             all servers' resources at a glance\r\n"
+            "  \x1b[36musers\x1b[0m                       list operator accounts\r\n"
+            "  \x1b[36madd-user\x1b[0m <name> [pw]          create/update an operator account\r\n"
+            "  \x1b[36mremove-user\x1b[0m <name>            delete an operator account\r\n"
+            "  \x1b[36mpasswd\x1b[0m [pw]                   change your own operator password\r\n"
+            "  \x1b[36mreset-password\x1b[0m <name> [pw]    set another operator's password\r\n"
+            "  \x1b[36mset-password\x1b[0m <server> [pw]    change a server's login password\r\n"
+            "  \x1b[36minfo\x1b[0m <server>                host, CPU, memory and disk summary\r\n"
+            "  \x1b[36mnet\x1b[0m <server>                 interfaces, listening ports, connections\r\n"
+            "  \x1b[36mprocs\x1b[0m <server> [n]             top n processes by CPU (default 15)\r\n"
+            "  \x1b[36mlogs\x1b[0m [n]                    show the last n relay log lines\r\n"
+            "  \x1b[36mwhoami\x1b[0m                      show which account you are using\r\n"
+            "  \x1b[36mping\x1b[0m                        check the C2 CLI is responsive\r\n"
+            "  \x1b[36mhelp\x1b[0m                        show this help\r\n"
+            "  \x1b[36mexit\x1b[0m                        disconnect\r\n"
+            "\r\n"
+            "  \x1b[2mPasswords with spaces/special chars (e.g. '!!') should be quoted:\x1b[0m\r\n"
+            "  \x1b[2m  add-server s1 \"p@ss !! word\"   (or omit it and type at the hidden prompt)\x1b[0m\r\n"
+            "\r\n"
+        )
+
+    def _print_servers(self) -> None:
+        servers = self.db.list_servers()
+        if not servers:
+            self._emit_text("No servers registered.\r\n")
+            return
+        counts = self.registry.session_counts()
+        self._emit_text(
+            "\r\n\x1b[1m  SERVER           STATUS     SESS  DESCRIPTION\x1b[0m\r\n"
+        )
+        for server in servers:
+            online = self.registry.is_online(server.name)
+            if not server.enabled:
+                status = "\x1b[33mdisabled\x1b[0m"
+            elif online:
+                status = "\x1b[32monline  \x1b[0m"
+            else:
+                status = "\x1b[31moffline \x1b[0m"
+            sessions = counts.get(server.name, 0) if online else 0
+            self._emit_text(
+                f"  {server.name:<16} {status} {sessions:>4}  {server.description}\r\n"
+            )
+        self._emit_text("\r\n")
+
+    def _print_sessions(self) -> None:
+        counts = {n: c for n, c in self.registry.session_counts().items() if c}
+        if not counts:
+            self._emit_text("No active sessions.\r\n")
+            return
+        self._emit_text("\r\n\x1b[1m  SERVER           ACTIVE SESSIONS\x1b[0m\r\n")
+        for name in sorted(counts):
+            self._emit_text(f"  {name:<16} {counts[name]}\r\n")
+        self._emit_text("\r\n")
+
+    def _print_users(self) -> None:
+        users = self.db.list_relay_users()
+        if not users:
+            self._emit_text("No operator accounts.\r\n")
+            return
+        self._emit_text("\r\n\x1b[1m  OPERATOR\x1b[0m\r\n")
+        for user in users:
+            marker = " \x1b[32m(you)\x1b[0m" if user == self.username else ""
+            self._emit_text(f"  {user}{marker}\r\n")
+        self._emit_text("\r\n")
+
+    def _default_host(self) -> str:
+        if self.config.advertise_host:
+            return self.config.advertise_host
+        conn = self._conn
+        if conn is not None:
+            try:
+                sockname = conn.get_extra_info("sockname")
+            except Exception:  # pragma: no cover - defensive
+                sockname = None
+            if sockname:
+                return sockname[0]
+        return ""
+
