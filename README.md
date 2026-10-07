@@ -596,3 +596,55 @@ Relay 운영자 계정
 
 ---
 
+## 테스트
+
+전체 테스트:
+
+```bash
+python -m pytest -q
+```
+
+테스트 범위:
+
+```text
+tests/test_protocol.py
+  프레이밍 / 바이너리 무손실 / resize / protocol 동일성
+
+tests/test_security.py
+  해시 / 토큰
+
+tests/test_lineeditor.py
+  편집 / 히스토리 / 제어문자 / UTF-8
+
+tests/test_db.py
+  운영자 계정 / 서버 관리 / 토큰 재발급 / 비밀번호 변경
+
+tests/test_sysinfo.py
+  info / net / procs 수집기
+
+tests/test_logs.py
+  로그 링버퍼
+
+tests/test_web.py
+  설치 웹 서버 / 토큰 검증 / 원라이너 / 패키지 배포
+
+tests/test_e2e.py
+  SSH → Relay → WebSocket → Agent PTY → bash 전체 경로
+```
+
+E2E 테스트에서는 실제 연결을 통해 다음 항목을 확인합니다.
+
+- 로그인 후 실제 셸 프롬프트
+- C2 관리 명령
+- 비밀번호 관리
+- 서버 리소스 조회
+- 관리자 `login` 및 exec `attach`
+- 비관리자 서버 직접 접속
+- ANSI 컬러 출력
+- 터미널 resize
+- Ctrl+C를 이용한 프로세스 종료
+- 긴 출력 스트리밍
+- 셸 종료 후 C2 CLI 복귀
+
+---
+
