@@ -38,3 +38,74 @@ class WebSocketSink:
         await self._ws.close(code=code, reason=reason)
 
 
+async def _handle_agent(db: RegistryDB, registry: Registry, config: RelayConfig, ws) -> None:
+    peer = getattr(ws, "remote_address", None)
+    agent: AgentConnection | None = None
+    try:
+        first = await asyncio.wait_for(ws.recv(), timeout=config.auth_timeout)
+        if isinstance(first, str):
+            first = first.encode("utf-8")
+        msg_type, _session, payload = protocol.decode(first)
+        if msg_type != protocol.AUTH:
+            await ws.send(protocol.encode(protocol.AUTH_FAIL, 0, "expected AUTH"))
+            await ws.close(code=4001, reason="protocol error")
+            return
+
+        info = protocol.decode_json(payload)
+        name = info.get("id")
+        token = info.get("token")
+        if not isinstance(name, str) or not isinstance(token, str):
+            await ws.send(protocol.encode(protocol.AUTH_FAIL, 0, "malformed AUTH"))
+            await ws.close(code=4001, reason="protocol error")
+            return
+
+        if not db.verify_agent_token(name, token):
+            log.warning("agent auth failed for %r from %s", name, peer)
+            await ws.send(protocol.encode(protocol.AUTH_FAIL, 0, "authentication failed"))
+            await ws.close(code=4001, reason="authentication failed")
+            return
+
+        agent = AgentConnection(name, WebSocketSink(ws), info)
+        await registry.add(agent)
+        await agent.send(
+            protocol.AUTH_OK,
+            0,
+            json.dumps(
+                {
+                    "version": protocol.PROTOCOL_VERSION,
+                    "server": name,
+                }
+            ),
+        )
+        log.info(
+            "agent %s connected from %s (host=%s os=%s)",
+            name,
+            peer,
+            info.get("hostname"),
+            info.get("os"),
+        )
+
+        async for raw in ws:
+            if isinstance(raw, str):
+                raw = raw.encode("utf-8")
+            try:
+                await agent.handle_frame(raw)
+            except protocol.ProtocolError as exc:
+                log.warning("bad frame from agent %s: %s", name, exc)
+    except asyncio.TimeoutError:
+        log.warning("agent from %s timed out during authentication", peer)
+        try:
+            await ws.close(code=4008, reason="auth timeout")
+        except Exception:
+            pass
+    except ConnectionClosed:
+        pass
+    except Exception:  # pragma: no cover - defensive
+        log.exception("agent handler error for %s", peer)
+    finally:
+        if agent is not None:
+            await agent.shutdown(b"agent disconnected")
+            await registry.remove(agent)
+            log.info("agent %s disconnected", agent.server_name)
+
+
