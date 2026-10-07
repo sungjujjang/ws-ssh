@@ -259,3 +259,9 @@ async def _scenario() -> None:
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def test_end_to_end_interactive_shell() -> None:
+    if BASH is None:
+        pytest.skip("no shell available")
+    asyncio.run(_scenario())
+
+
