@@ -136,3 +136,74 @@ repo_root() {
   echo "$(cd "$here/.." && pwd)"
 }
 
+copy_source() {
+  local repo="$1"
+  [ -d "$repo/agent" ] || die "cannot find 'agent/' next to $repo - run this script from the repository (agent/setup.sh)"
+  log "installing application files into $INSTALL_DIR"
+  mkdir -p "$INSTALL_DIR"
+  rm -rf "$INSTALL_DIR/agent"
+  cp -a "$repo/agent" "$INSTALL_DIR/"
+  [ -f "$repo/README.md" ] && cp -a "$repo/README.md" "$INSTALL_DIR/" || true
+}
+
+create_venv() {
+  log "creating virtualenv"
+  if [ ! -x "$PY" ]; then
+    python3 -m venv "$VENV"
+  fi
+  "$VENV/bin/pip" install --quiet --upgrade pip
+  "$VENV/bin/pip" install --quiet -r "$INSTALL_DIR/agent/requirements.txt"
+  ok "python dependencies installed"
+}
+
+read_existing_env() {
+  [ -f "$ENV_FILE" ] || return 0
+  local value
+  value="$(sed -n 's/^WS_RELAY_URL="\(.*\)"$/\1/p' "$ENV_FILE")"; [ -z "$RELAY_URL" ] && RELAY_URL="$value"
+  value="$(sed -n 's/^WS_SERVER_ID="\(.*\)"$/\1/p' "$ENV_FILE")"; [ -z "$SERVER_ID" ] && SERVER_ID="$value"
+  value="$(sed -n 's/^WS_AGENT_TOKEN="\(.*\)"$/\1/p' "$ENV_FILE")"; [ -z "$TOKEN" ] && TOKEN="$value"
+  value="$(sed -n 's/^WS_SHELL="\(.*\)"$/\1/p' "$ENV_FILE")"; [ -z "$SHELL_PATH" ] && SHELL_PATH="$value"
+}
+
+write_env_file() {
+  [ -n "$RELAY_URL" ] || die "--relay is required (no existing $ENV_FILE to reuse)"
+  [ -n "$SERVER_ID" ] || die "--id is required (no existing $ENV_FILE to reuse)"
+  [ -n "$TOKEN" ]     || die "--token is required (no existing $ENV_FILE to reuse)"
+
+  log "writing credentials $ENV_FILE"
+  mkdir -p "$CONFIG_DIR"
+  umask 077
+  {
+    printf 'WS_RELAY_URL="%s"\n' "$RELAY_URL"
+    printf 'WS_SERVER_ID="%s"\n' "$SERVER_ID"
+    printf 'WS_AGENT_TOKEN="%s"\n' "$TOKEN"
+    if [ -n "$SHELL_PATH" ]; then
+      printf 'WS_SHELL="%s"\n' "$SHELL_PATH"
+    fi
+  } > "$ENV_FILE"
+  chmod 600 "$ENV_FILE"
+  ok "credentials written"
+}
+
+ensure_service_user() {
+  if [ "$(id -u)" -ne 0 ]; then
+    warn "non-root install: skipping service user setup"
+    return
+  fi
+  if [ "$SERVICE_USER" = "root" ]; then
+    return
+  fi
+  if ! id "$SERVICE_USER" >/dev/null 2>&1; then
+    log "creating system user '$SERVICE_USER'"
+    useradd --system --home-dir "$INSTALL_DIR" --shell /usr/sbin/nologin "$SERVICE_USER" || true
+  fi
+  chown -R "$SERVICE_USER":"$SERVICE_USER" "$INSTALL_DIR"
+}
+
+install_service() {
+  if [ "$INSTALL_SERVICE" = "0" ]; then
+    warn "skipping systemd install (--no-service)"
+    return
+  fi
+  command -v systemctl >/dev/null 2>&1 || die "systemctl not found; re-run with --no-service"
+
