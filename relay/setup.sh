@@ -66,3 +66,72 @@ Options:
 EOF
 }
 
+# --------------------------------------------------------------------------- #
+# argument parsing
+# --------------------------------------------------------------------------- #
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --ssh-host)        SSH_HOST="${2:?}"; shift 2 ;;
+    --ssh-port)        SSH_PORT="${2:?}"; shift 2 ;;
+    --ws-host)         WS_HOST="${2:?}"; shift 2 ;;
+    --ws-port)         WS_PORT="${2:?}"; shift 2 ;;
+    --web-host)        WEB_HOST="${2:?}"; shift 2 ;;
+    --web-port)        WEB_PORT="${2:?}"; shift 2 ;;
+    --advertise-host)  ADVERTISE_HOST="${2:?}"; shift 2 ;;
+    --install-dir)     INSTALL_DIR="${2:?}"; shift 2 ;;
+    --config-dir)      CONFIG_DIR="${2:?}"; shift 2 ;;
+    --data-dir)        DATA_DIR="${2:?}"; shift 2 ;;
+    --service-name)    SERVICE_NAME="${2:?}"; shift 2 ;;
+    --service-user)    SERVICE_USER="${2:?}"; shift 2 ;;
+    --admin-user)      ADMIN_USER="${2:?}"; shift 2 ;;
+    --admin-password)  ADMIN_PASSWORD="${2:?}"; shift 2 ;;
+    --no-service)      INSTALL_SERVICE=0; shift ;;
+    --skip-deps)       SKIP_DEPS=1; shift ;;
+    --allow-nonroot)   ALLOW_NONROOT=1; shift ;;
+    -h|--help)         usage; exit 0 ;;
+    *) die "unknown option: $1 (see --help)" ;;
+  esac
+done
+
+CONFIG_FILE="$CONFIG_DIR/relay.yaml"
+VENV="$INSTALL_DIR/venv"
+PY="$VENV/bin/python"
+
+# --------------------------------------------------------------------------- #
+# helpers
+# --------------------------------------------------------------------------- #
+require_root() {
+  if [ "$(id -u)" -ne 0 ]; then
+    if [ "$ALLOW_NONROOT" = "1" ]; then
+      warn "running as non-root (--allow-nonroot): system packages and services are disabled"
+      INSTALL_SERVICE=0
+      SKIP_DEPS=1
+      return
+    fi
+    die "must run as root (try: sudo $0 $*) or pass --allow-nonroot for a user-local install"
+  fi
+}
+
+detect_ubuntu() {
+  if [ -r /etc/os-release ]; then
+    # shellcheck disable=SC1091
+    . /etc/os-release
+    case "${ID:-}${ID_LIKE:-}" in
+      *ubuntu*|*debian*) : ;;
+      *) warn "this script targets Ubuntu/Debian but ID='${ID:-unknown}' was detected; continuing" ;;
+    esac
+  fi
+}
+
+install_deps() {
+  if [ "$SKIP_DEPS" = "1" ]; then
+    log "skipping apt-get (--skip-deps)"
+    return
+  fi
+  log "installing system packages (python3, venv, pip)"
+  export DEBIAN_FRONTEND=noninteractive
+  apt-get update -y
+  apt-get install -y --no-install-recommends \
+    python3 python3-venv python3-pip ca-certificates
+}
+
