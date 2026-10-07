@@ -674,3 +674,88 @@ class RelaySession(asyncssh.SSHServerSession):
             return
         self._emit_text(f"server {name} removed\r\n")
 
+    async def _cmd_kick(self, args: list[str]) -> None:
+        if not args:
+            self._emit_text("usage: kick <server>\r\n")
+            return
+        name = args[0]
+        if not await self.registry.disconnect(name, b"kicked by operator"):
+            self._emit_text(f"server {name} is not connected\r\n")
+            return
+        self._emit_text(f"agent for {name} disconnected (it will reconnect)\r\n")
+
+    async def _cmd_reset_token(self, args: list[str]) -> None:
+        if not args:
+            self._emit_text("usage: reset-token <server>\r\n")
+            return
+        name = args[0]
+        token = self.db.rotate_server_token(name)
+        if token is None:
+            self._emit_text(f"\x1b[31munknown server:\x1b[0m {name}\r\n")
+            return
+        await self.registry.disconnect(name, b"agent token rotated")
+        host = self._default_host()
+        self._emit_text(f"\r\n\x1b[32mNew agent token for '{name}' (shown once):\x1b[0m\r\n\r\n")
+        installer = install_command(self.config, name, token, host) if host else None
+        if installer:
+            self._emit_text(
+                "Run this one-liner on the server to (re)install the agent:\r\n\r\n"
+                f"  \x1b[36m{installer}\x1b[0m\r\n\r\n"
+            )
+        else:
+            self._emit_text(f"  {token}\r\n\r\n")
+
+    async def _cmd_add_user(self, args: list[str]) -> None:
+        if not args:
+            self._emit_text("usage: add-user <name> [password]\r\n")
+            return
+        name = args[0]
+        password = args[1] if len(args) > 1 else None
+        if password is None:
+            password = await self._read_password(f"Password for operator {name}: ")
+            if password is None:
+                self._emit_text("cancelled\r\n")
+                return
+        if not password:
+            self._emit_text("password must not be empty\r\n")
+            return
+        self.db.add_relay_user(name, password)
+        self._emit_text(f"\x1b[32moperator '{name}' saved.\x1b[0m\r\n")
+
+    async def _cmd_remove_user(self, args: list[str]) -> None:
+        if not args:
+            self._emit_text("usage: remove-user <name>\r\n")
+            return
+        name = args[0]
+        if name == self.username:
+            self._emit_text("\x1b[33mcannot remove the account you are logged in with\x1b[0m\r\n")
+            return
+        if not self.db.relay_user_exists(name):
+            self._emit_text(f"\x1b[31munknown operator:\x1b[0m {name}\r\n")
+            return
+        if self.db.count_relay_users() <= 1:
+            self._emit_text("\x1b[33mrefusing to remove the last operator account\x1b[0m\r\n")
+            return
+        self.db.remove_relay_user(name)
+        self._emit_text(f"operator '{name}' removed\r\n")
+
+    async def _cmd_passwd(self, args: list[str]) -> None:
+        new = args[0] if args else None
+        if new is None:
+            new = await self._read_password("New password: ")
+            if new is None:
+                self._emit_text("cancelled\r\n")
+                return
+            confirm = await self._read_password("Confirm password: ")
+            if confirm is None:
+                self._emit_text("cancelled\r\n")
+                return
+            if confirm != new:
+                self._emit_text("\x1b[31mpasswords do not match\x1b[0m\r\n")
+                return
+        if not new:
+            self._emit_text("password must not be empty\r\n")
+            return
+        self.db.add_relay_user(self.username, new)
+        self._emit_text("\x1b[32mpassword changed\x1b[0m (applies to your next login)\r\n")
+
