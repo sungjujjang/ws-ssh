@@ -260,3 +260,32 @@ python -m relay.manage add-server ...
 
 ---
 
+## Relay 주소 설정
+
+에이전트가 접속할 Relay 주소는 다음 순서로 결정됩니다.
+
+1. `relay.advertise_host`
+2. `relay/setup.sh --advertise-host`
+3. SSH 접속에 사용한 주소
+4. `WS_RELAY_ADVERTISE_HOST`
+
+예를 들어:
+
+```yaml
+relay:
+  advertise_host: relay.example.com
+  ws_port: 8765
+  ws_path: /agent
+
+web:
+  web_port: 1234
+```
+
+NAT나 프록시 뒤에서 운영한다면 `advertise_host`를 직접 지정하는 편이 안전합니다.
+
+포트를 변경했다면 `--ws-port`와 `--web-port`도 함께 맞춰야 합니다.
+
+TLS를 사용할 경우에는 nginx나 Caddy 같은 reverse proxy 뒤에 두고 `wss://`, `https://`를 사용하는 구성을 권장합니다.
+
+---
+
