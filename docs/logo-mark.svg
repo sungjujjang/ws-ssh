@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 160" width="160" height="160" role="img" aria-label="WS-SSH mark">
+  <defs>
+    <linearGradient id="m" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#16324a"/>
+      <stop offset="1" stop-color="#0c1a2a"/>
+    </linearGradient>
+    <linearGradient id="e" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#3ddc84"/>
+      <stop offset="1" stop-color="#2b7fff"/>
+    </linearGradient>
+  </defs>
+  <rect x="4" y="4" width="152" height="152" rx="38" fill="url(#m)" stroke="url(#e)" stroke-width="6"/>
+  <path d="M 48 52 L 84 84 L 48 116" fill="none" stroke="#3ddc84" stroke-width="14" stroke-linecap="round" stroke-linejoin="round"/>
+  <rect x="98" y="104" width="36" height="14" rx="7" fill="#3ddc84"/>
+  <rect x="98" y="54" width="20" height="14" rx="7" fill="#2b7fff" opacity="0.85"/>
+</svg>
