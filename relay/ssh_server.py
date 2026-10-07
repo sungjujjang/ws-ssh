@@ -759,3 +759,99 @@ class RelaySession(asyncssh.SSHServerSession):
         self.db.add_relay_user(self.username, new)
         self._emit_text("\x1b[32mpassword changed\x1b[0m (applies to your next login)\r\n")
 
+    async def _cmd_reset_password(self, args: list[str]) -> None:
+        if not args:
+            self._emit_text("usage: reset-password <operator> [password]\r\n")
+            return
+        name = args[0]
+        if not self.db.relay_user_exists(name):
+            self._emit_text(f"\x1b[31munknown operator:\x1b[0m {name}\r\n")
+            return
+        new = args[1] if len(args) > 1 else None
+        if new is None:
+            new = await self._read_password(f"New password for operator {name}: ")
+            if new is None:
+                self._emit_text("cancelled\r\n")
+                return
+        if not new:
+            self._emit_text("password must not be empty\r\n")
+            return
+        self.db.add_relay_user(name, new)
+        self._emit_text(f"\x1b[32mpassword for operator '{name}' updated.\x1b[0m\r\n")
+
+    async def _cmd_set_server_password(self, args: list[str]) -> None:
+        if not args:
+            self._emit_text("usage: set-password <server> [password]\r\n")
+            return
+        name = args[0]
+        if self.db.get_server(name) is None:
+            self._emit_text(f"\x1b[31munknown server:\x1b[0m {name}\r\n")
+            return
+        new = args[1] if len(args) > 1 else None
+        if new is None:
+            new = await self._read_password(f"New login password for server {name}: ")
+            if new is None:
+                self._emit_text("cancelled\r\n")
+                return
+        if not new:
+            self._emit_text("password must not be empty\r\n")
+            return
+        self.db.set_server_login_password(name, new)
+        self._emit_text(
+            f"\x1b[32mlogin password for '{name}' updated.\x1b[0m "
+            "(direct SSH login and 'login' use it)\r\n"
+        )
+
+    async def _sysinfo(self, name: str, cmd: str, args: dict | None = None) -> dict | None:
+        agent = self.registry.get(name)
+        if agent is None or agent.closed:
+            self._emit_text(f"server {name} is offline (agent not connected)\r\n")
+            return None
+        self._emit_text(f"querying {name}...\r\n")
+        try:
+            reply = await agent.request_sysinfo(cmd, args)
+        except (ConnectionError, OSError) as exc:
+            self._emit_text(f"\x1b[31m{name}: {exc}\x1b[0m\r\n")
+            return None
+        if not reply or not reply.get("ok"):
+            error = (reply or {}).get("error") or "request failed"
+            self._emit_text(f"\x1b[31m{name}: {error}\x1b[0m\r\n")
+            return None
+        return reply.get("data") or {}
+
+    async def _cmd_info(self, args: list[str]) -> None:
+        if not args:
+            self._emit_text("usage: info <server>\r\n")
+            return
+        name = args[0]
+        data = await self._sysinfo(name, "info")
+        if data is None:
+            return
+        self._print_info(name, data)
+
+    async def _cmd_net(self, args: list[str]) -> None:
+        if not args:
+            self._emit_text("usage: net <server>\r\n")
+            return
+        name = args[0]
+        data = await self._sysinfo(name, "net")
+        if data is None:
+            return
+        self._print_net(name, data)
+
+    async def _cmd_procs(self, args: list[str]) -> None:
+        if not args:
+            self._emit_text("usage: procs <server> [n]\r\n")
+            return
+        name = args[0]
+        limit = 15
+        if len(args) > 1:
+            try:
+                limit = max(1, min(int(args[1]), 100))
+            except ValueError:
+                pass
+        data = await self._sysinfo(name, "procs", {"n": limit})
+        if data is None:
+            return
+        self._print_procs(name, data)
+
