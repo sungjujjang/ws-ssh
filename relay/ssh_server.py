@@ -189,3 +189,102 @@ class RelaySession(asyncssh.SSHServerSession):
         self._session_mode_ready.set()
         return True
 
+    def exec_requested(self, command: str) -> bool:
+        # `ssh -t operator@relay attach <server>` (or just `<server>`) attaches
+        # straight to that server's shell, skipping the C2 menu entirely.
+        self._exec_command = command
+        self._exec_target = self._parse_exec(command)
+        self._session_mode_ready.set()
+        return True
+
+    def terminal_size_changed(self, width, height, pixwidth, pixheight) -> None:
+        if width and height:
+            self._cols, self._rows = width, height
+        if self._bridge is not None:
+            asyncio.ensure_future(self._bridge.send_resize(self._cols, self._rows))
+
+    def data_received(self, data, datatype) -> None:
+        if isinstance(data, str):
+            data = data.encode("utf-8")
+        self._inbound.put_nowait(data)
+
+    def eof_received(self) -> bool:
+        self._inbound.put_nowait(None)
+        return False
+
+    def connection_lost(self, exc) -> None:
+        self.writing_allowed.set()
+        self._inbound.put_nowait(None)
+        if self._task is not None:
+            self._task.cancel()
+
+    def break_received(self, msec) -> bool:
+        # Forward a real BREAK as CTRL+C is not possible; treat as ^C to the shell.
+        if self._bridge is not None:
+            asyncio.ensure_future(self._bridge.send_input(b"\x03"))
+        return True
+
+    # -- output helpers ----------------------------------------------------
+    def _emit_text(self, text: str) -> None:
+        if self._chan is None:
+            return
+        try:
+            self._chan.write(text.encode("utf-8"))
+        except (BrokenPipeError, ConnectionError, asyncssh.Error):
+            pass
+
+    def _emit_bytes(self, data: bytes) -> None:
+        if self._chan is None:
+            return
+        try:
+            self._chan.write(data)
+        except (BrokenPipeError, ConnectionError, asyncssh.Error):
+            pass
+
+    # -- main loop ---------------------------------------------------------
+    async def _run(self) -> None:
+        try:
+            if self.direct_server is not None:
+                await self._attach_direct(self.direct_server)
+            else:
+                # Wait (briefly) for the client to tell us shell-vs-exec so we
+                # don't flash the C2 menu before an exec attach.
+                try:
+                    await asyncio.wait_for(self._session_mode_ready.wait(), timeout=1.0)
+                except asyncio.TimeoutError:
+                    pass
+                if self._exec_target is not None:
+                    await self._attach_admin(self._exec_target)
+                else:
+                    self._emit_text(self.config.banner)
+                    self._editor.set_prompt(self._prompt)
+                    self._editor.render_prompt()
+            while not self._exit_requested:
+                data = await self._inbound.get()
+                if data is None:
+                    break
+                if self._bridge is not None:
+                    await self._bridge.send_input(data)
+                    continue
+                lines = self._editor.feed(data)
+                for line in lines:
+                    await self._handle_command(line)
+                    if self._bridge is not None or self._exit_requested:
+                        break
+                if self._editor.eof:
+                    break
+                # The line editor already echoes each keystroke incrementally
+                # (and redraws itself for Ctrl+C/arrows/history).  Only print a
+                # fresh prompt once a command has completed, otherwise every
+                # keypress would redraw the whole prompt+line.
+                if lines and self._bridge is None and not self._exit_requested:
+                    self._editor.render_prompt()
+        except asyncio.CancelledError:  # pragma: no cover - shutdown
+            pass
+        except (BrokenPipeError, ConnectionError, asyncssh.Error):
+            pass
+        except Exception:  # pragma: no cover - unexpected
+            log.exception("session error for %s", self.username)
+        finally:
+            await self._cleanup()
+
