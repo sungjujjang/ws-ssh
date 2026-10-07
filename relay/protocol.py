@@ -97,3 +97,33 @@ def decode_json(payload: bytes) -> Any:
         raise ProtocolError(f"invalid json payload: {exc}") from exc
 
 
+def encode_resize(session_id: int, cols: int, rows: int) -> bytes:
+    return encode(RESIZE, session_id, _RESIZE.pack(cols & 0xFFFF, rows & 0xFFFF))
+
+
+def decode_resize(payload: bytes) -> tuple[int, int]:
+    if len(payload) < _RESIZE.size:
+        raise ProtocolError("resize payload too short")
+    cols, rows = _RESIZE.unpack_from(payload, 0)
+    return cols, rows
+
+
+_TYPE_NAMES = {
+    AUTH: "AUTH",
+    AUTH_OK: "AUTH_OK",
+    AUTH_FAIL: "AUTH_FAIL",
+    PING: "PING",
+    PONG: "PONG",
+    EXIT: "EXIT",
+    SYSINFO: "SYSINFO",
+    SYSINFO_RES: "SYSINFO_RES",
+    OPEN: "OPEN",
+    OPENED: "OPENED",
+    CLOSE: "CLOSE",
+    DATA: "DATA",
+    RESIZE: "RESIZE",
+}
+
+
+def type_name(msg_type: int) -> str:
+    return _TYPE_NAMES.get(msg_type, f"0x{msg_type:02x}")
