@@ -76,3 +76,41 @@ SSH Client
 
 ---
 
+## 프로젝트 구조
+
+`relay/`와 `agent/`는 서로 독립적으로 배포할 수 있습니다.
+
+두 폴더는 서로 import하지 않고, 공통 프로토콜은 각각 `protocol.py`로 가지고 있습니다. 두 파일의 동일성은 테스트로 확인합니다.
+
+```text
+relay/
+├── __main__.py          # SSH / WebSocket / 설치 웹 서버 실행
+├── ssh_server.py        # SSH 서버, C2 CLI, 서버 접속
+├── lineeditor.py        # C2 CLI 라인 에디터
+├── ws_server.py         # 에이전트 WebSocket 수신 및 인증
+├── web.py               # 에이전트 설치 웹 서버
+├── registry.py          # 에이전트 연결 및 세션 관리
+├── logs.py              # 최근 로그 링버퍼
+├── db.py                # SQLite 및 자격증명 관리
+├── security.py          # PBKDF2 해시 / 토큰
+├── config.py            # YAML + 환경변수 설정
+├── manage.py            # DB 초기화 및 관리 CLI
+├── protocol.py          # 공통 프로토콜
+├── requirements.txt
+└── setup.sh
+
+agent/
+├── __main__.py
+├── agent.py             # WebSocket 클라이언트 / 세션 멀티플렉싱
+├── sysinfo.py           # 호스트 / 네트워크 / 프로세스 정보
+├── pty_backend.py       # Unix PTY / Windows ConPTY
+├── protocol.py          # 공통 프로토콜
+├── requirements.txt
+└── setup.sh
+
+tests/
+└── 프로토콜 / 보안 / CLI / DB / 로그 / 웹 / E2E 테스트
+```
+
+---
+
