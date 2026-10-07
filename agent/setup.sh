@@ -207,3 +207,71 @@ install_service() {
   fi
   command -v systemctl >/dev/null 2>&1 || die "systemctl not found; re-run with --no-service"
 
+  local unit="/etc/systemd/system/$SERVICE_NAME.service"
+  log "installing systemd unit $unit"
+  cat > "$unit" <<EOF
+[Unit]
+Description=WS-SSH internal agent ($SERVER_ID)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=$SERVICE_USER
+WorkingDirectory=$INSTALL_DIR
+EnvironmentFile=$ENV_FILE
+ExecStart=$PY -m agent
+Restart=always
+RestartSec=5
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target
+EOF
+  systemctl daemon-reload
+  systemctl enable "$SERVICE_NAME" >/dev/null
+  systemctl restart "$SERVICE_NAME"
+  ok "service '$SERVICE_NAME' enabled and started"
+}
+
+print_summary() {
+  cat <<EOF
+
+$(ok "internal agent installation complete")
+
+  server id     : $SERVER_ID
+  relay         : $RELAY_URL
+  credentials   : $ENV_FILE
+  installed at  : $INSTALL_DIR
+
+Useful commands
+  systemctl status $SERVICE_NAME
+  journalctl -u $SERVICE_NAME -f
+
+Note: the agent runs as '$SERVICE_USER'. If that should be a specific login
+      account (so the remote shell belongs to that user), re-run with
+      --service-user <name>.
+
+EOF
+}
+
+# --------------------------------------------------------------------------- #
+# main
+# --------------------------------------------------------------------------- #
+main() {
+  require_root "$@"
+  detect_os
+  read_existing_env
+  local repo
+  repo="$(repo_root)"
+
+  install_deps
+  copy_source "$repo"
+  create_venv
+  write_env_file
+  ensure_service_user
+  install_service
+  print_summary
+}
+
+main "$@"
