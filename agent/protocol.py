@@ -61,3 +61,69 @@ _RESIZE = struct.Struct(">HH")
 MAX_FRAME_SIZE = 4 * 1024 * 1024
 
 
+class ProtocolError(Exception):
+    """Raised when an incoming frame cannot be parsed."""
+
+
+def encode(msg_type: int, session_id: int = 0, payload: bytes | str | None = None) -> bytes:
+    """Encode a protocol message into a binary frame."""
+    if payload is None:
+        body = b""
+    elif isinstance(payload, str):
+        body = payload.encode("utf-8")
+    else:
+        body = bytes(payload)
+    if len(body) > MAX_FRAME_SIZE:
+        raise ProtocolError(f"frame too large: {len(body)} bytes")
+    return _HEADER.pack(msg_type & 0xFF, session_id & 0xFFFFFFFF) + body
+
+
+def decode(frame: bytes) -> tuple[int, int, bytes]:
+    """Decode a binary frame into ``(type, session_id, payload)``."""
+    if len(frame) < HEADER_SIZE:
+        raise ProtocolError(f"frame too short: {len(frame)} bytes")
+    msg_type, session_id = _HEADER.unpack_from(frame, 0)
+    return msg_type, session_id, frame[HEADER_SIZE:]
+
+
+def encode_json(msg_type: int, session_id: int, obj: Any) -> bytes:
+    return encode(msg_type, session_id, json.dumps(obj, separators=(",", ":")))
+
+
+def decode_json(payload: bytes) -> Any:
+    try:
+        return json.loads(payload.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError) as exc:  # pragma: no cover - defensive
+        raise ProtocolError(f"invalid json payload: {exc}") from exc
+
+
+def encode_resize(session_id: int, cols: int, rows: int) -> bytes:
+    return encode(RESIZE, session_id, _RESIZE.pack(cols & 0xFFFF, rows & 0xFFFF))
+
+
+def decode_resize(payload: bytes) -> tuple[int, int]:
+    if len(payload) < _RESIZE.size:
+        raise ProtocolError("resize payload too short")
+    cols, rows = _RESIZE.unpack_from(payload, 0)
+    return cols, rows
+
+
+_TYPE_NAMES = {
+    AUTH: "AUTH",
+    AUTH_OK: "AUTH_OK",
+    AUTH_FAIL: "AUTH_FAIL",
+    PING: "PING",
+    PONG: "PONG",
+    EXIT: "EXIT",
+    SYSINFO: "SYSINFO",
+    SYSINFO_RES: "SYSINFO_RES",
+    OPEN: "OPEN",
+    OPENED: "OPENED",
+    CLOSE: "CLOSE",
+    DATA: "DATA",
+    RESIZE: "RESIZE",
+}
+
+
+def type_name(msg_type: int) -> str:
+    return _TYPE_NAMES.get(msg_type, f"0x{msg_type:02x}")
