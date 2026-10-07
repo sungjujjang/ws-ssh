@@ -1,0 +1,15 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ws-ssh"
+version = "0.1.0"
+description = "PTY-based SSH relay + internal agent for WS-SSH"
+requires-python = ">=3.10"
+dependencies = [
+    "asyncssh>=2.14",
+    "websockets>=13",
+    "PyYAML>=6.0",
+]
+
