@@ -289,3 +289,89 @@ TLS를 사용할 경우에는 nginx나 Caddy 같은 reverse proxy 뒤에 두고 
 
 ---
 
+## 빠르게 실행하기
+
+### 1. 설정과 DB 초기화
+
+```bash
+cp config.example.yaml config.yaml
+
+python -m relay.manage -c config.yaml init
+python -m relay.manage -c config.yaml add-user alice
+python -m relay.manage -c config.yaml add-server server-001
+```
+
+`add-server`에서 생성된 에이전트 토큰은 한 번만 출력됩니다.
+
+### 2. Relay 실행
+
+```bash
+python -m relay -c config.yaml
+```
+
+기본 포트:
+
+```text
+SSH : 0.0.0.0:2222
+WS  : ws://0.0.0.0:8765/agent
+WEB : http://0.0.0.0:1234
+```
+
+### 3. 내부 서버에 Agent 실행
+
+Linux:
+
+```bash
+python -m agent \
+  --relay ws://relay-host:8765/agent \
+  --id server-001 \
+  --token ws_xxxxxxxxxxxxxxxxxxxx \
+  --shell /bin/bash
+```
+
+Windows:
+
+```powershell
+python -m agent `
+  --relay ws://relay-host:8765/agent `
+  --id win-001 `
+  --token ws_... `
+  --shell cmd.exe
+```
+
+셸의 시작 디렉터리는 기본적으로 에이전트를 실행한 사용자의 홈 디렉터리입니다.
+
+변경하려면:
+
+```bash
+python -m agent --cwd /path
+```
+
+또는 `WS_CWD`, 설정 파일의 `cwd`를 사용할 수 있습니다.
+
+우선순위는 다음과 같습니다.
+
+```text
+Relay OPEN의 cwd
+    ↓
+--cwd / WS_CWD / cwd
+    ↓
+사용자 홈 디렉터리
+```
+
+Linux에서는 기본 셸로 bash를 우선 사용합니다.
+
+```text
+/bin/bash
+/usr/bin/bash
+/usr/local/bin/bash
+    ↓
+$SHELL
+    ↓
+sh
+```
+
+다른 셸을 사용하려면 `--shell` 또는 `WS_SHELL`을 지정하면 됩니다.
+
+---
+
