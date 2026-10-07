@@ -101,3 +101,57 @@ class RegistryDB:
             ).fetchone()
         return row is not None
 
+    def list_relay_users(self) -> list[str]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT username FROM relay_users ORDER BY username"
+            ).fetchall()
+        return [row["username"] for row in rows]
+
+    def remove_relay_user(self, username: str) -> bool:
+        with self._connect() as conn:
+            cur = conn.execute("DELETE FROM relay_users WHERE username = ?", (username,))
+        return cur.rowcount > 0
+
+    def count_relay_users(self) -> int:
+        with self._connect() as conn:
+            row = conn.execute("SELECT COUNT(*) AS n FROM relay_users").fetchone()
+        return int(row["n"])
+
+    # -- internal servers --------------------------------------------------
+    def add_server(
+        self,
+        name: str,
+        login_password: str,
+        *,
+        description: str = "",
+        token: str | None = None,
+    ) -> str:
+        """Create (or update) a server.  Returns the plaintext agent token."""
+        token = token or new_token()
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT INTO servers "
+                "(name, token_hash, login_password_hash, description, enabled, created_at) "
+                "VALUES (?, ?, ?, ?, 1, ?) "
+                "ON CONFLICT(name) DO UPDATE SET "
+                "  token_hash=excluded.token_hash, "
+                "  login_password_hash=excluded.login_password_hash, "
+                "  description=excluded.description",
+                (name, hash_secret(token), hash_secret(login_password), description, _now()),
+            )
+        return token
+
+    def set_server_enabled(self, name: str, enabled: bool) -> bool:
+        with self._connect() as conn:
+            cur = conn.execute(
+                "UPDATE servers SET enabled = ? WHERE name = ?",
+                (1 if enabled else 0, name),
+            )
+        return cur.rowcount > 0
+
+    def remove_server(self, name: str) -> bool:
+        with self._connect() as conn:
+            cur = conn.execute("DELETE FROM servers WHERE name = ?", (name,))
+        return cur.rowcount > 0
+
