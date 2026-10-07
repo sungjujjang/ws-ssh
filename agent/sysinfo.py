@@ -191,3 +191,91 @@ def collect_info() -> dict[str, Any]:
     }
 
 
+def _net_interfaces() -> list[dict[str, Any]]:
+    result: list[dict[str, Any]] = []
+    if psutil is not None:
+        stats = _safe(psutil.net_if_stats, {}) or {}
+        addrs = _safe(psutil.net_if_addrs, {}) or {}
+        counters = _safe(psutil.net_io_counters, None)
+        per_nic = _safe(lambda: psutil.net_io_counters(pernic=True), {}) or {}
+        for name, nic in per_nic.items():
+            st = stats.get(name)
+            addresses = [
+                a.address
+                for a in addrs.get(name, [])
+                if a.family in (socket.AF_INET, socket.AF_INET6)
+            ]
+            result.append(
+                {
+                    "name": name,
+                    "up": bool(getattr(st, "isup", False)) if st else None,
+                    "speed": getattr(st, "speed", None) if st else None,
+                    "mtu": getattr(st, "mtu", None) if st else None,
+                    "addrs": addresses,
+                    "rx_bytes": nic.bytes_recv,
+                    "tx_bytes": nic.bytes_sent,
+                    "rx_packets": nic.packets_recv,
+                    "tx_packets": nic.packets_sent,
+                    "errors": nic.errin + nic.errout,
+                    "drops": nic.dropin + nic.dropout,
+                }
+            )
+        if result:
+            if counters is not None:
+                result.sort(key=lambda r: r["rx_bytes"] + r["tx_bytes"], reverse=True)
+            return result
+    # /proc/net/dev fallback
+    try:
+        lines = _read("/proc/net/dev").splitlines()[2:]
+    except Exception:
+        return result
+    for line in lines:
+        name, _, rest = line.partition(":")
+        fields = rest.split()
+        if len(fields) < 16:
+            continue
+        result.append(
+            {
+                "name": name.strip(),
+                "up": None,
+                "speed": None,
+                "mtu": None,
+                "addrs": [],
+                "rx_bytes": int(fields[0]),
+                "tx_bytes": int(fields[8]),
+                "rx_packets": int(fields[1]),
+                "tx_packets": int(fields[9]),
+                "errors": int(fields[2]) + int(fields[10]),
+                "drops": int(fields[3]) + int(fields[11]),
+            }
+        )
+    return result
+
+
+def _listening() -> list[dict[str, Any]]:
+    if psutil is not None:
+        rows: list[dict[str, Any]] = []
+        for conn in _safe(lambda: psutil.net_connections(kind="inet"), []) or []:
+            if conn.status != psutil.CONN_LISTEN:
+                continue
+            laddr = conn.laddr
+            address = getattr(laddr, "ip", None) or (laddr[0] if laddr else "")
+            port = getattr(laddr, "port", None) or (laddr[1] if laddr and len(laddr) > 1 else None)
+            name = None
+            if conn.pid:
+                name = _safe(lambda: psutil.Process(conn.pid).name())
+            rows.append(
+                {
+                    "proto": "tcp",
+                    "laddr": f"{address}:{port}",
+                    "state": "LISTEN",
+                    "pid": conn.pid,
+                    "process": name,
+                }
+            )
+        if rows:
+            rows.sort(key=lambda r: (r["pid"] is None, r["laddr"]))
+            return rows
+    return _proc_listen_ports()
+
+
