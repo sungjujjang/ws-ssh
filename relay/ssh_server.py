@@ -855,3 +855,109 @@ class RelaySession(asyncssh.SSHServerSession):
             return
         self._print_procs(name, data)
 
+    def _print_info(self, name: str, data: dict) -> None:
+        self._emit_text(
+            f"\r\n\x1b[1m{name}\x1b[0m  {data.get('hostname', '')}  {data.get('os', '')}\r\n"
+        )
+        ips = ", ".join(data.get("ips") or []) or "-"
+        self._emit_text(f"  {'kernel':<10} {data.get('kernel', '')} ({data.get('arch', '')})\r\n")
+        self._emit_text(f"  {'python':<10} {data.get('python', '')}\r\n")
+        self._emit_text(f"  {'ips':<10} {ips}\r\n")
+        self._emit_text(f"  {'uptime':<10} {_human_duration(data.get('uptime_seconds'))}\r\n")
+        load = data.get("loadavg")
+        load_s = " ".join(f"{x:g}" for x in load) if load else "-"
+        cpu = data.get("cpu_percent")
+        cpu_s = f"{cpu:.0f}%" if isinstance(cpu, (int, float)) else "-"
+        self._emit_text(
+            f"  {'load':<10} {load_s}   cpu {cpu_s}   {data.get('cpu_count') or '?'} cores\r\n"
+        )
+        mem = data.get("memory")
+        if mem:
+            self._emit_text(
+                f"  {'memory':<10} {_human_bytes(mem.get('used'))} / {_human_bytes(mem.get('total'))} "
+                f"({(mem.get('percent') or 0):.0f}%)\r\n"
+            )
+        swap = data.get("swap")
+        if swap and swap.get("total"):
+            self._emit_text(
+                f"  {'swap':<10} {_human_bytes(swap.get('used'))} / {_human_bytes(swap.get('total'))} "
+                f"({(swap.get('percent') or 0):.0f}%)\r\n"
+            )
+        for disk in data.get("disk") or []:
+            self._emit_text(
+                f"  {'disk':<10} {disk.get('path', ''):<16} {_human_bytes(disk.get('used'))} / "
+                f"{_human_bytes(disk.get('total'))} ({(disk.get('percent') or 0):.0f}%)\r\n"
+            )
+        self._emit_text("\r\n")
+
+    def _print_net(self, name: str, data: dict) -> None:
+        self._emit_text(f"\r\n\x1b[1mInterfaces\x1b[0m ({name})\r\n")
+        interfaces = data.get("interfaces") or []
+        if not interfaces:
+            self._emit_text("  (none reported)\r\n")
+        else:
+            self._emit_text(f"  {'NAME':<12} {'UP':<4} {'RX':>10} {'TX':>10}  ADDRS\r\n")
+            for iface in interfaces:
+                up = "yes" if iface.get("up") else ("no" if iface.get("up") is False else "?")
+                addrs = ", ".join(iface.get("addrs") or [])
+                self._emit_text(
+                    f"  {str(iface.get('name', '')):<12} {up:<4} "
+                    f"{_human_bytes(iface.get('rx_bytes')):>10} "
+                    f"{_human_bytes(iface.get('tx_bytes')):>10}  {addrs}\r\n"
+                )
+        listening = data.get("listening") or []
+        self._emit_text(f"\r\n\x1b[1mListening\x1b[0m ({len(listening)})\r\n")
+        for row in listening[:30]:
+            pid = row.get("pid")
+            pid_s = f"pid {pid}" if pid else ""
+            self._emit_text(
+                f"  {str(row.get('proto', 'tcp')):<4} {str(row.get('laddr', '')):<24} "
+                f"{pid_s:<9} {row.get('process') or ''}\r\n"
+            )
+        if len(listening) > 30:
+            self._emit_text(f"  ... {len(listening) - 30} more\r\n")
+        count = data.get("connection_count")
+        if count is not None:
+            self._emit_text(f"\r\n  connections: {count}\r\n")
+        self._emit_text("\r\n")
+
+    def _print_procs(self, name: str, data: dict) -> None:
+        rows = data.get("processes") or []
+        self._emit_text(f"\r\n\x1b[1mTop processes\x1b[0m ({name})\r\n")
+        self._emit_text(f"  {'PID':>7}  {'CPU%':>5}  {'MEM%':>5}  {'USER':<12} NAME\r\n")
+        for proc in rows:
+            cpu = f"{proc['cpu_percent']:.1f}" if isinstance(proc.get("cpu_percent"), (int, float)) else "-"
+            memp = (
+                f"{proc['memory_percent']:.1f}"
+                if isinstance(proc.get("memory_percent"), (int, float))
+                else "-"
+            )
+            user = str(proc.get("username") or "")[:12]
+            self._emit_text(
+                f"  {str(proc.get('pid', '')):>7}  {cpu:>5}  {memp:>5}  {user:<12} {proc.get('name', '')}\r\n"
+            )
+        self._emit_text("\r\n")
+
+    async def _fetch_info(self, name: str) -> dict | None:
+        agent = self.registry.get(name)
+        if agent is None or agent.closed:
+            return None
+        try:
+            reply = await agent.request_sysinfo("info", timeout=8.0)
+        except (ConnectionError, OSError):
+            return None
+        if not reply or not reply.get("ok"):
+            return None
+        return reply.get("data") or {}
+
+    async def _cmd_overview(self, args: list[str]) -> None:
+        servers = self.db.list_servers()
+        if not servers:
+            self._emit_text("No servers registered.\r\n")
+            return
+        online = [s.name for s in servers if s.enabled and self.registry.is_online(s.name)]
+        if online:
+            self._emit_text(f"gathering resources from {len(online)} online server(s)...\r\n")
+        infos = await asyncio.gather(*(self._fetch_info(name) for name in online))
+        self._print_overview(servers, dict(zip(online, infos)))
+
