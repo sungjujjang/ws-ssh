@@ -179,3 +179,63 @@ class AgentConnection:
         for bridge in bridges:
             await bridge.on_agent_close(reason)
 
+    @property
+    def closed(self) -> bool:
+        return self._closed
+
+
+class Registry:
+    def __init__(self) -> None:
+        self._agents: dict[str, AgentConnection] = {}
+        self._lock = asyncio.Lock()
+
+    async def add(self, agent: AgentConnection) -> None:
+        async with self._lock:
+            previous = self._agents.get(agent.server_name)
+            self._agents[agent.server_name] = agent
+        if previous is not None:
+            log.info("agent %s reconnected; evicting old connection", agent.server_name)
+            await previous.shutdown(b"replaced by a newer agent connection")
+
+    async def remove(self, agent: AgentConnection) -> None:
+        async with self._lock:
+            current = self._agents.get(agent.server_name)
+            if current is agent:
+                del self._agents[agent.server_name]
+
+    def get(self, server_name: str) -> AgentConnection | None:
+        return self._agents.get(server_name)
+
+    def is_online(self, server_name: str) -> bool:
+        agent = self._agents.get(server_name)
+        return agent is not None and not agent.closed
+
+    def online_servers(self) -> list[str]:
+        return [name for name, agent in self._agents.items() if not agent.closed]
+
+    def session_counts(self) -> dict[str, int]:
+        return {
+            name: len(agent.sessions)
+            for name, agent in self._agents.items()
+            if not agent.closed
+        }
+
+    async def disconnect(self, server_name: str, reason: bytes = b"disconnected by operator") -> bool:
+        """Drop a live agent connection.  Returns True if one was connected."""
+        agent = self._agents.get(server_name)
+        if agent is None or agent.closed:
+            return False
+        await agent.shutdown(reason)
+        closer = getattr(agent.sink, "close", None)
+        if closer is not None:
+            try:
+                await closer(1000, "disconnected by operator")
+            except Exception:  # pragma: no cover - transport may already be gone
+                pass
+        await self.remove(agent)
+        return True
+
+    async def shutdown(self) -> None:
+        for agent in list(self._agents.values()):
+            await agent.shutdown(b"relay shutting down")
+        self._agents.clear()
