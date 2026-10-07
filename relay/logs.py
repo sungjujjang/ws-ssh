@@ -19,3 +19,28 @@ class LogBuffer(logging.Handler):
             logging.Formatter("%(asctime)s %(levelname)-7s %(name)s: %(message)s")
         )
 
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            self.records.append(self.format(record))
+        except Exception:  # pragma: no cover - formatting must never break logging
+            pass
+
+    def tail(self, n: int) -> list[str]:
+        if n <= 0:
+            return []
+        return list(self.records)[-n:]
+
+
+_buffer = LogBuffer()
+
+
+def install(level: int = logging.INFO) -> LogBuffer:
+    _buffer.setLevel(level)
+    root = logging.getLogger()
+    if _buffer not in root.handlers:
+        root.addHandler(_buffer)
+    return _buffer
+
+
+def tail(n: int = 100) -> list[str]:
+    return _buffer.tail(n)
