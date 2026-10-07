@@ -1065,3 +1065,90 @@ class RelaySession(asyncssh.SSHServerSession):
         return []
 
 
+class RelaySSHServer(asyncssh.SSHServer):
+    def __init__(self, db: RegistryDB, registry: Registry, config: RelayConfig):
+        self.db = db
+        self.registry = registry
+        self.config = config
+        self._conn: asyncssh.SSHServerConnection | None = None
+        self._username = ""
+        self._direct_server: str | None = None
+        self._authorized_keys = self._load_authorized_keys()
+
+    def _load_authorized_keys(self) -> set[bytes]:
+        path = self.config.authorized_keys
+        if not path or not os.path.exists(path):
+            return set()
+        keys: set[bytes] = set()
+        with open(path, "r", encoding="utf-8") as handle:
+            for line in handle:
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                try:
+                    key = asyncssh.import_public_key(line)
+                    keys.add(key.export_public_key())
+                except (asyncssh.KeyImportError, ValueError):
+                    continue
+        return keys
+
+    def connection_made(self, conn) -> None:
+        self._conn = conn
+
+    def begin_auth(self, username: str) -> bool:
+        self._username = username
+        self._direct_server = None
+        return True
+
+    def password_auth_supported(self) -> bool:
+        return True
+
+    def validate_password(self, username: str, password: str) -> bool:
+        # 1) operator/admin account -> the C2 CLI
+        if self.db.verify_relay_user(username, password):
+            self._direct_server = None
+            return True
+        # 2) server credentials -> straight into that server's shell
+        if self.db.verify_server_login(username, password):
+            self._direct_server = username
+            log.info("direct SSH login for server %r", username)
+            return True
+        if self.config.allow_anonymous:
+            log.warning("allowing anonymous SSH login for %r (allow_anonymous=true)", username)
+            self._direct_server = None
+            return True
+        return False
+
+    def public_key_auth_supported(self) -> bool:
+        return bool(self._authorized_keys)
+
+    def validate_public_key(self, username: str, key) -> bool:
+        if key.export_public_key() in self._authorized_keys:
+            self._direct_server = None
+            return True
+        return False
+
+    def session_requested(self) -> RelaySession:
+        return RelaySession(
+            self._username,
+            self.db,
+            self.registry,
+            self.config,
+            self._conn,
+            direct_server=self._direct_server,
+        )
+
+
+async def start_ssh_server(db: RegistryDB, registry: Registry, config: RelayConfig):
+    host_key = load_or_create_host_key(config.host_key)
+    return await asyncssh.listen(
+        config.ssh_host,
+        config.ssh_port,
+        server_factory=lambda: RelaySSHServer(db, registry, config),
+        server_host_keys=[host_key],
+        encoding=None,
+        line_editor=False,
+        line_echo=False,
+        allow_scp=False,
+        compression_algs=None,
+    )
