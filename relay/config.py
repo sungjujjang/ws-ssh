@@ -57,3 +57,71 @@ class RelayConfig:
     banner: str = DEFAULT_BANNER
     extra: dict[str, Any] = field(default_factory=dict)
 
+    @classmethod
+    def load(cls, path: str | None) -> "RelayConfig":
+        data: dict[str, Any] = {}
+        if path:
+            with open(path, "r", encoding="utf-8") as handle:
+                data = yaml.safe_load(handle) or {}
+        relay = data.get("relay", {}) if isinstance(data, dict) else {}
+        database = data.get("database", {}) if isinstance(data, dict) else {}
+        logging = data.get("logging", {}) if isinstance(data, dict) else {}
+        web = data.get("web", {}) if isinstance(data, dict) else {}
+
+        config = cls()
+        simple_fields = (
+            "ssh_host",
+            "ssh_port",
+            "ws_host",
+            "ws_port",
+            "ws_path",
+            "host_key",
+            "authorized_keys",
+            "allow_anonymous",
+            "default_term",
+            "auth_timeout",
+            "ping_interval",
+            "ping_timeout",
+            "open_timeout",
+            "advertise_host",
+            "banner",
+        )
+        for name in simple_fields:
+            if name in relay:
+                setattr(config, name, relay[name])
+        web_fields = ("web_enabled", "web_host", "web_port", "agent_package")
+        for name in web_fields:
+            if name in web:
+                setattr(config, name, web[name])
+        if "agent_package" in relay:  # allow either section
+            config.agent_package = relay["agent_package"]
+        if "path" in database:
+            config.db_path = database["path"]
+        if "level" in logging:
+            config.log_level = logging["level"]
+
+        # environment overrides (handy for containers)
+        env_map = {
+            "WS_RELAY_SSH_HOST": "ssh_host",
+            "WS_RELAY_SSH_PORT": "ssh_port",
+            "WS_RELAY_WS_HOST": "ws_host",
+            "WS_RELAY_WS_PORT": "ws_port",
+            "WS_RELAY_HOST_KEY": "host_key",
+            "WS_RELAY_DB": "db_path",
+            "WS_RELAY_ALLOW_ANONYMOUS": "allow_anonymous",
+            "WS_RELAY_WEB_HOST": "web_host",
+            "WS_RELAY_WEB_PORT": "web_port",
+            "WS_RELAY_ADVERTISE_HOST": "advertise_host",
+            "WS_RELAY_AGENT_PACKAGE": "agent_package",
+        }
+        for env_name, field_name in env_map.items():
+            if env_name in os.environ:
+                raw = os.environ[env_name]
+                current = getattr(config, field_name)
+                if isinstance(current, bool):
+                    setattr(config, field_name, raw.strip().lower() in ("1", "true", "yes", "on"))
+                elif isinstance(current, int):
+                    setattr(config, field_name, int(raw))
+                else:
+                    setattr(config, field_name, raw)
+        return config
