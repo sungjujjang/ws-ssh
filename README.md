@@ -445,3 +445,52 @@ server-001:~$
 
 ---
 
+## C2 CLI
+
+| 명령 | 설명 |
+| --- | --- |
+| `list` / `servers` / `ls` | 서버 목록과 상태, 활성 세션 확인 |
+| `sessions` / `who` | 서버별 활성 세션 확인 |
+| `add-server <id> [password]` | 서버 생성 및 설치 링크 생성 |
+| `login <server> [password]` | 서버 셸에 연결 |
+| `enable <server>` | 서버 접속 허용 |
+| `disable <server>` | 서버 접속 차단 및 연결 해제 |
+| `remove-server <server>` | 서버 및 자격증명 삭제 |
+| `kick <server>` | 에이전트 연결 강제 종료 |
+| `reset-token <server>` | 에이전트 토큰 재발급 |
+| `overview` / `fleet` / `all` | 모든 서버의 리소스 정보 |
+| `users` / `admins` | 운영자 계정 목록 |
+| `add-user <name> [password]` | 운영자 계정 생성 또는 변경 |
+| `remove-user <name>` | 운영자 계정 삭제 |
+| `passwd [password]` | 현재 운영자 비밀번호 변경 |
+| `reset-password <name> [password]` | 다른 운영자 비밀번호 변경 |
+| `set-password <server> [password]` | 서버 로그인 비밀번호 변경 |
+| `info <server>` | 호스트 / CPU / 메모리 / 디스크 정보 |
+| `net <server>` | 네트워크 인터페이스 / 포트 / 연결 정보 |
+| `procs <server> [n]` | CPU 사용률 상위 프로세스 |
+| `logs [n]` | 최근 Relay 로그 |
+| `whoami` | 현재 계정 확인 |
+| `ping` | CLI 응답 확인 |
+| `help` / `?` | 도움말 |
+| `exit` / `quit` / `logout` | 접속 종료 |
+
+`info`, `net`, `procs`는 `SYSINFO` 제어 프레임을 통해 에이전트에 요청합니다.
+
+에이전트에 `psutil`이 있으면 이를 사용하고, 없는 경우 `/proc`과 표준 라이브러리를 이용해 정보를 수집합니다.
+
+C2 CLI는 다음 입력도 지원합니다.
+
+```text
+방향키      히스토리 / 커서 이동
+Home / End
+Delete
+Tab         자동 완성
+Ctrl+A/E/U/K/W
+Ctrl+C/L
+Backspace
+```
+
+비밀번호를 생략한 명령에서는 화면에 입력 내용이 표시되지 않습니다.
+
+---
+
