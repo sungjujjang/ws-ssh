@@ -58,3 +58,62 @@ class SessionBridge:
             return
         await self.agent.send(protocol.RESIZE, self.session_id, protocol._RESIZE.pack(cols, rows))
 
+    async def close(self, reason: bytes = b"") -> None:
+        if self.closed:
+            return
+        self.closed = True
+        await self.agent.send(protocol.CLOSE, self.session_id, reason)
+        self.agent.remove_session(self.session_id)
+        await self._fire_callbacks()
+
+    # -- called from the agent WebSocket side -----------------------------
+    async def feed_client(self, data: bytes) -> None:
+        if self.closed:
+            return
+        await self.client.write(data)
+
+    async def on_agent_close(self, final: bytes) -> None:
+        if self.closed:
+            return
+        self.closed = True
+        if final:
+            try:
+                await self.client.write(final)
+            except Exception:  # pragma: no cover - client may already be gone
+                pass
+        self.agent.remove_session(self.session_id)
+        await self._fire_callbacks()
+
+    def on_closed(self, callback) -> None:
+        self._close_callbacks.append(callback)
+
+    async def _fire_callbacks(self) -> None:
+        callbacks, self._close_callbacks = self._close_callbacks, []
+        for callback in callbacks:
+            try:
+                result = callback()
+                if asyncio.iscoroutine(result):
+                    await result
+            except Exception:  # pragma: no cover - defensive
+                log.exception("session close callback failed")
+
+
+class AgentConnection:
+    """A single agent WebSocket plus the sessions multiplexed over it."""
+
+    def __init__(self, server_name: str, sink: AgentSink, info: dict[str, Any] | None = None):
+        self.server_name = server_name
+        self.sink = sink
+        self.info = info or {}
+        self.sessions: dict[int, SessionBridge] = {}
+        self._send_lock = asyncio.Lock()
+        self._closed = False
+        self._info_pending: dict[int, asyncio.Future] = {}
+        self.connected_at = asyncio.get_event_loop().time()
+
+    async def send(self, msg_type: int, session_id: int = 0, payload: bytes | str = b"") -> None:
+        if self._closed:
+            raise ConnectionError("agent connection is closed")
+        async with self._send_lock:
+            await self.sink.send_raw(protocol.encode(msg_type, session_id, payload))
+
