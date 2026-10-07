@@ -64,3 +64,79 @@ class AgentSession:
     def start(self) -> None:
         self._task = asyncio.ensure_future(self._pump())
 
+    async def _pump(self) -> None:
+        try:
+            while True:
+                data = await self.pty.read()
+                if not data:
+                    break
+                await self.agent.send(protocol.DATA, self.session_id, data)
+        except asyncio.CancelledError:  # pragma: no cover - shutdown
+            raise
+        except (ConnectionClosed, ConnectionError):
+            pass
+        except Exception:  # pragma: no cover - defensive
+            log.exception("session %s pump failed", self.session_id)
+        finally:
+            await self._finish()
+
+    async def _finish(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        self.agent.sessions.pop(self.session_id, None)
+        self.pty.close()
+        try:
+            await self.agent.send(protocol.CLOSE, self.session_id, b"")
+        except (ConnectionClosed, ConnectionError):
+            pass
+
+    def write(self, data: bytes) -> None:
+        self.pty.write(data)
+
+    def resize(self, cols: int, rows: int) -> None:
+        self.pty.resize(cols, rows)
+
+    async def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        self.pty.close()
+        if self._task is not None:
+            self._task.cancel()
+
+
+class Agent:
+    def __init__(self, config: AgentConfig):
+        self.config = config
+        self.sessions: dict[int, AgentSession] = {}
+        self._ws = None
+        self._send_lock = asyncio.Lock()
+        self._stop = False
+
+    async def send(self, msg_type: int, session_id: int = 0, payload: bytes | str = b"") -> None:
+        async with self._send_lock:
+            ws = self._ws
+            if ws is None:
+                return
+            await ws.send(protocol.encode(msg_type, session_id, payload))
+
+    async def run(self) -> None:
+        backoff = self.config.reconnect_min
+        while not self._stop:
+            try:
+                await self._connect_and_serve()
+                backoff = self.config.reconnect_min
+            except AuthError as exc:
+                log.error("authentication rejected by relay: %s", exc)
+                backoff = self.config.reconnect_max
+            except (ConnectionClosed, OSError, InvalidHandshake, InvalidStatus, asyncio.TimeoutError) as exc:
+                log.warning("relay connection lost: %s", exc)
+            except Exception:  # pragma: no cover - defensive
+                log.exception("unexpected agent error")
+            if self._stop:
+                break
+            log.info("reconnecting in %.1fs", backoff)
+            await asyncio.sleep(backoff)
+            backoff = min(backoff * 2, self.config.reconnect_max)
+
