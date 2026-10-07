@@ -277,3 +277,11 @@ def test_c2_split_args_keeps_special_characters() -> None:
     assert split("set-password srv 'a b!c'") == ["set-password", "srv", "a b!c"]
 
 
+def test_default_shell_prefers_bash() -> None:
+    import sys
+
+    if sys.platform == "win32":
+        pytest.skip("POSIX only")
+    if not (shutil.which("bash") or os.path.exists("/bin/bash")):
+        pytest.skip("bash not installed")
+    assert default_shell().endswith("bash")
